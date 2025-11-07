@@ -1,21 +1,59 @@
 // Saved registers for kernel context switches.
 struct context {
-  uint64 ra;
-  uint64 sp;
+  uint64 ra;    // 0
+  uint64 sp;    // 8
 
-  // callee-saved
-  uint64 s0;
-  uint64 s1;
-  uint64 s2;
-  uint64 s3;
-  uint64 s4;
-  uint64 s5;
-  uint64 s6;
-  uint64 s7;
-  uint64 s8;
-  uint64 s9;
-  uint64 s10;
-  uint64 s11;
+  // callee-saved integer registers
+  uint64 s0;    // 16
+  uint64 s1;    // 24
+  uint64 s2;    // 32
+  uint64 s3;    // 40
+  uint64 s4;    // 48
+  uint64 s5;    // 56
+  uint64 s6;    // 64
+  uint64 s7;    // 72
+  uint64 s8;    // 80
+  uint64 s9;    // 88
+  uint64 s10;   // 96
+  uint64 s11;   // 104
+
+  // Floating-point registers (f0..f31)
+  // Stored as 64-bit doubles (RISC-V 'double' registers are 64-bit)
+  uint64 f0;    // 112
+  uint64 f1;    // 120
+  uint64 f2;    // 128
+  uint64 f3;    // 136
+  uint64 f4;    // 144
+  uint64 f5;    // 152
+  uint64 f6;    // 160
+  uint64 f7;    // 168
+  uint64 f8;    // 176
+  uint64 f9;    // 184
+  uint64 f10;   // 192
+  uint64 f11;   // 200
+  uint64 f12;   // 208
+  uint64 f13;   // 216
+  uint64 f14;   // 224
+  uint64 f15;   // 232
+  uint64 f16;   // 240
+  uint64 f17;   // 248
+  uint64 f18;   // 256
+  uint64 f19;   // 264
+  uint64 f20;   // 272
+  uint64 f21;   // 280
+  uint64 f22;   // 288
+  uint64 f23;   // 296
+  uint64 f24;   // 304
+  uint64 f25;   // 312
+  uint64 f26;   // 320
+  uint64 f27;   // 328
+  uint64 f28;   // 336
+  uint64 f29;   // 344
+  uint64 f30;   // 352
+  uint64 f31;   // 360
+
+  // Floating-point control and status register
+  uint64 fcsr;  // 368
 };
 
 // Per-CPU state.
