@@ -15,6 +15,113 @@ r_mhartid()
 #define MSTATUS_MPP_M (3L << 11)
 #define MSTATUS_MPP_S (1L << 11)
 #define MSTATUS_MPP_U (0L << 11)
+#define MSTATUS_FS         (3UL << 13)   // FS field mask (bits 13–14)
+#define MSTATUS_FS_OFF     (0UL << 13)   // 00 = Off
+#define MSTATUS_FS_INITIAL (1UL << 13)   // 01 = Initial (Clean)
+#define MSTATUS_FS_CLEAN   (2UL << 13)   // 10 = Clean
+#define MSTATUS_FS_DIRTY   (3UL << 13)   // 11 = Dirty
+
+static inline uint64
+r_fcsr()
+{
+  uint64 x;
+  asm volatile("csrr %0, fcsr" : "=r" (x) );
+  return x;
+}
+
+// Write FCSR
+static inline void 
+w_fcsr(uint64 x)
+{
+  asm volatile("csrw fcsr, %0" : : "r" (x));
+}
+
+// ============================================================================
+// FCSR Exception Flags (bits 0-4)
+// ============================================================================
+#define FCSR_NX (1L << 0)  // Inexact
+#define FCSR_UF (1L << 1)  // Underflow
+#define FCSR_OF (1L << 2)  // Overflow
+#define FCSR_DZ (1L << 3)  // Divide by Zero
+#define FCSR_NV (1L << 4)  // Invalid Operation
+
+// All exception flags mask
+#define FCSR_EXCEPTION_MASK 0x1F  // bits 0-4
+
+// Rounding modes (bits 5-7)
+#define FCSR_RM_MASK (7L << 5)
+#define FCSR_RM_RNE  (0L << 5)  // Round to Nearest, ties to Even
+#define FCSR_RM_RTZ  (1L << 5)  // Round towards Zero
+#define FCSR_RM_RDN  (2L << 5)  // Round Down (towards -∞)
+#define FCSR_RM_RUP  (3L << 5)  // Round Up (towards +∞)
+#define FCSR_RM_RMM  (4L << 5)  // Round to Nearest, ties to Max Magnitude
+
+// ============================================================================
+// SSTATUS FPU Field Definitions (for lazy FPU)
+// ============================================================================
+#define SSTATUS_FS         (3L << 13)   // FS field mask (bits 13-14)
+#define SSTATUS_FS_OFF     (0L << 13)   // 00 = Off
+#define SSTATUS_FS_INITIAL (1L << 13)   // 01 = Initial (Clean)
+#define SSTATUS_FS_CLEAN   (2L << 13)   // 10 = Clean
+#define SSTATUS_FS_DIRTY   (3L << 13)   // 11 = Dirty
+
+// ============================================================================
+// RISC-V Exception/Trap Cause Codes
+// ============================================================================
+#define CAUSE_INSTRUCTION_MISALIGNED  0
+#define CAUSE_INSTRUCTION_ACCESS_FAULT 1
+#define CAUSE_ILLEGAL_INSTRUCTION     2
+#define CAUSE_BREAKPOINT              3
+#define CAUSE_LOAD_MISALIGNED         4
+#define CAUSE_LOAD_ACCESS_FAULT       5
+#define CAUSE_STORE_MISALIGNED        6
+#define CAUSE_STORE_ACCESS_FAULT      7
+#define CAUSE_USER_ECALL              8
+#define CAUSE_SUPERVISOR_ECALL        9
+#define CAUSE_INSTRUCTION_PAGE_FAULT  12
+#define CAUSE_LOAD_PAGE_FAULT         13
+#define CAUSE_STORE_PAGE_FAULT        15
+
+// ============================================================================
+// Helper Macros for FPU Exception Handling
+// ============================================================================
+
+// Check if FCSR has any exception flags set
+#define FCSR_HAS_EXCEPTION(fcsr) (((fcsr) & FCSR_EXCEPTION_MASK) != 0)
+
+// Fatal exception mask (exclude NX because inexact is non-fatal/expected)
+#define FCSR_FATAL_MASK (FCSR_NV | FCSR_DZ | FCSR_OF | FCSR_UF)
+#define FCSR_HAS_FATAL_EXCEPTION(x) (((x) & FCSR_FATAL_MASK) != 0)
+
+// Check if sstatus has FPU disabled
+#define SSTATUS_FPU_DISABLED(sstatus) (((sstatus) & SSTATUS_FS) == SSTATUS_FS_OFF)
+
+// Enable FPU in sstatus (set to Initial state)
+#define SSTATUS_ENABLE_FPU(sstatus) ((sstatus & ~SSTATUS_FS) | SSTATUS_FS_INITIAL)
+
+// ============================================================================
+// RISC-V Instruction Opcode Masks (Simplified FP Detection)
+// ============================================================================
+
+// RISC-V instruction format opcodes
+#define OPCODE_MASK       0x7F        // bits 0-6
+#define OPCODE_LOAD_FP    0x07        // FLW, FLD (floating-point load)
+#define OPCODE_STORE_FP   0x27        // FSW, FSD (floating-point store)
+#define OPCODE_FMADD      0x43        // FMADD.S, FMADD.D
+#define OPCODE_FMSUB      0x47        // FMSUB.S, FMSUB.D
+#define OPCODE_FNMSUB     0x4B        // FNMSUB.S, FNMSUB.D
+#define OPCODE_FNMADD     0x4F        // FNMADD.S, FNMADD.D
+#define OPCODE_FP_OP      0x53        // FADD, FSUB, FMUL, FDIV, etc.
+
+// Helper macro to check if instruction is FP operation
+#define IS_FP_INSTRUCTION(inst) ( \
+  ((inst) & OPCODE_MASK) == OPCODE_LOAD_FP   || \
+  ((inst) & OPCODE_MASK) == OPCODE_STORE_FP  || \
+  ((inst) & OPCODE_MASK) == OPCODE_FMADD     || \
+  ((inst) & OPCODE_MASK) == OPCODE_FMSUB     || \
+  ((inst) & OPCODE_MASK) == OPCODE_FNMSUB    || \
+  ((inst) & OPCODE_MASK) == OPCODE_FNMADD    || \
+  ((inst) & OPCODE_MASK) == OPCODE_FP_OP )
 
 static inline uint64
 r_mstatus()

@@ -1,3 +1,5 @@
+Makefile:
+
 
 # To compile and run with a lab solution, set the lab name in conf/lab.mk
 # (e.g., LAB=util).  Run make grade to test solution with the lab's
@@ -31,6 +33,7 @@ OBJS = \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o
+  
 
 OBJS_KCSAN = \
   $K/start.o \
@@ -144,7 +147,7 @@ $K/%.o: $K/%.S
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o
 
 ifeq ($(LAB),lock)
 ULIB += $U/statistics.o
@@ -154,6 +157,16 @@ _%: %.o $(ULIB) $U/user.ld
 	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $< $(ULIB)
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+
+# Explicit rule for test_stdlib: link shared suite code with a tiny main wrapper
+$U/_test_stdlib: $U/test_stdlib_main.o $U/test_stdlib.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/test_stdlib_main.o $U/test_stdlib.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/test_stdlib.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_stdlib.sym
+
+# Special rule for tm2: link milestone runner with shared stdlib suite
+#
+# test_milestone2 removed; use _test_stdlib instead
 
 $U/usys.S : $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
@@ -167,6 +180,23 @@ $U/_forktest: $U/forktest.o $(ULIB)
 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
 	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
 
+# ============================================================================
+# Special linking rule for mathtest - needs math library
+# ============================================================================
+$U/_mathtest: $U/mathtest.o $U/xv6_maths.o $(ULIB)
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/mathtest.o $U/xv6_maths.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/mathtest.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/mathtest.sym
+
+# ============================================================================
+# Generic rule for other user programs
+# ============================================================================
+_%: %.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $< $(ULIB)
+	$(OBJDUMP) -S $@ > $*.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+
+
 mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 	gcc $(XCFLAGS) -Wno-unknown-attributes -Werror -Wall -I. -o mkfs/mkfs mkfs/mkfs.c
 
@@ -179,6 +209,11 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
+	$U/_float_test\
+	$U/_fpu_multi\
+	$U/_fputrap_test\
+	$U/_fputest\
+	$U/_mathtest\
 	$U/_forktest\
 	$U/_grep\
 	$U/_init\
@@ -197,7 +232,8 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_test_string\
-	
+	$U/_test_stdlib\
+\
 
 
 

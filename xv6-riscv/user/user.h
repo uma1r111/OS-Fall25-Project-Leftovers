@@ -66,3 +66,11 @@ void printf(const char*, ...) __attribute__ ((format (printf, 1, 2)));
 // umalloc.c
 void* malloc(uint);
 void free(void*);
+
+// xv6_stdlib.c
+void* calloc(uint nmemb, uint size);
+void* bsearch(const void *key, const void *base, uint nmemb, uint size,
+              int (*compar)(const void *, const void *));
+void qsort(void *base, uint nmemb, uint size,
+           int (*compar)(const void *, const void *));
+float atof(const char *nptr);

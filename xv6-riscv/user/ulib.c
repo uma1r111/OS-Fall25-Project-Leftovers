@@ -102,11 +102,33 @@ int
 atoi(const char *s)
 {
   int n;
+  int sign;
+
+  if (s == 0)
+    return 0;
+
+  // Skip leading whitespace
+  while (*s == ' ' || *s == '\t' || *s == '\n')
+    s++;
+
+  // Handle sign
+  sign = 1;
+  if (*s == '+') {
+    s++;
+  } else if (*s == '-') {
+    sign = -1;
+    s++;
+  }
+
+  // Parse digits
 
   n = 0;
-  while('0' <= *s && *s <= '9')
-    n = n*10 + *s++ - '0';
-  return n;
+  while ('0' <= *s && *s <= '9') {
+    n = n * 10 + *s - '0';
+    s++;
+  }
+
+  return sign * n;
 }
 
 void*
