@@ -10,6 +10,14 @@ volatile static int started = 0;
 void
 main()
 {
+  // ---------------------------------------------------------------------------
+  // Enable FPU in Supervisor Mode (FS = Initial)
+  // ---------------------------------------------------------------------------
+  unsigned long x = r_sstatus();
+  x &= ~SSTATUS_FS;          // clear FS bits
+  x |= SSTATUS_FS_INITIAL;   // set FS = Initial (01)
+  w_sstatus(x);
+
   if(cpuid() == 0){
     consoleinit();
 #if defined(LAB_LOCK)
