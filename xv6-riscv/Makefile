@@ -198,12 +198,12 @@ $U/_maintestrunner: $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_s
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/maintestrunner.sym
 
 # ============================================================================
-# Special linking rule for test_milestone2 (built as _tm2) - same as maintestrunner
+# Special linking rule for tm2 (unified test runner)
 # ============================================================================
-$U/_tm2: $U/test_milestone2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
-	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/test_milestone2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
-	$(OBJDUMP) -S $@ > $U/test_milestone2.asm
-	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_milestone2.sym
+$U/_tm2: $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/tm2.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/tm2.sym
 
 # ============================================================================
 # Generic rule for other user programs

@@ -217,8 +217,8 @@ void test_bsearch(struct test_result *tr)
     test_fail(tr, "bsearch empty array", "should return NULL");
 }
 
-// Test atoi
-void test_atoi(struct test_result *tr)
+// Test atoi (renamed to avoid conflict with test_string.c)
+void test_stdlib_atoi(struct test_result *tr)
 {
   printf("\n=== Testing atoi ===\n");
 
@@ -258,8 +258,8 @@ void test_atoi(struct test_result *tr)
     test_fail(tr, "atoi with plus sign", "incorrect result");
 }
 
-// Test atof
-void test_atof(struct test_result *tr)
+// Test atof (renamed to avoid conflict with test_string.c)
+void test_stdlib_atof(struct test_result *tr)
 {
   printf("\n=== Testing atof ===\n");
 
@@ -312,8 +312,9 @@ run_stdlib_tests(struct test_result *total_tr)
   test_calloc(&stdlib_tr);
   test_qsort(&stdlib_tr);
   test_bsearch(&stdlib_tr);
-  test_atoi(&stdlib_tr);
-  test_atof(&stdlib_tr);
+  
+  test_stdlib_atoi(&stdlib_tr);
+  test_stdlib_atof(&stdlib_tr);
 
   print_test_summary("Standard Library", &stdlib_tr);
 

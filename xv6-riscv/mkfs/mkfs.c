@@ -4,6 +4,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <sys/types.h>
 
 #define stat xv6_stat  // avoid clash with host struct stat
 #include "kernel/types.h"
@@ -107,6 +108,14 @@ main(int argc, char *argv[])
 
   freeblock = nmeta;     // the first free block that we can allocate
 
+  // Explicitly extend file to full size before writing
+  if(lseek(fsfd, (FSSIZE * BSIZE) - 1, SEEK_SET) < 0)
+    die("lseek extend");
+  if(write(fsfd, "", 1) != 1)
+    die("write extend");
+  if(lseek(fsfd, 0, SEEK_SET) < 0)
+    die("lseek reset");
+
   for(i = 0; i < FSSIZE; i++)
     wsect(i, zeroes);
 
@@ -162,6 +171,9 @@ main(int argc, char *argv[])
     close(fd);
   }
 
+  // Ensure all writes are flushed before reading back
+  fsync(fsfd);
+
   // fix size of root inode dir
   rinode(rootino, &din);
   off = xint(din.size);
@@ -204,7 +216,15 @@ rinode(uint inum, struct dinode *ip)
   uint bn;
   struct dinode *dip;
 
+  if(inum >= NINODES) {
+    fprintf(stderr, "rinode: invalid inode number %u (NINODES=%d)\n", inum, NINODES);
+    exit(1);
+  }
   bn = IBLOCK(inum, sb);
+  if(bn >= FSSIZE) {
+    fprintf(stderr, "rinode: inode %u block %u >= FSSIZE %d\n", inum, bn, FSSIZE);
+    exit(1);
+  }
   rsect(bn, buf);
   dip = ((struct dinode*)buf) + (inum % IPB);
   *ip = *dip;
@@ -213,10 +233,18 @@ rinode(uint inum, struct dinode *ip)
 void
 rsect(uint sec, void *buf)
 {
-  if(lseek(fsfd, sec * BSIZE, 0) != sec * BSIZE)
+  ssize_t n;
+  if(sec >= FSSIZE) {
+    fprintf(stderr, "rsect: invalid sector %u (FSSIZE=%d)\n", sec, FSSIZE);
+    exit(1);
+  }
+  if(lseek(fsfd, sec * BSIZE, SEEK_SET) != (off_t)(sec * BSIZE))
     die("lseek");
-  if(read(fsfd, buf, BSIZE) != BSIZE)
+  n = read(fsfd, buf, BSIZE);
+  if(n != BSIZE) {
+    fprintf(stderr, "rsect: read sector %u: expected %d bytes, got %zd\n", sec, BSIZE, n);
     die("read");
+  }
 }
 
 uint
@@ -269,19 +297,44 @@ iappend(uint inum, void *xp, int n)
     assert(fbn < MAXFILE);
     if(fbn < NDIRECT){
       if(xint(din.addrs[fbn]) == 0){
+        if(freeblock >= FSSIZE){
+          fprintf(stderr, "iappend: out of blocks (freeblock=%u, FSSIZE=%d)\n", freeblock, FSSIZE);
+          exit(1);
+        }
         din.addrs[fbn] = xint(freeblock++);
       }
       x = xint(din.addrs[fbn]);
+      if(x >= FSSIZE) {
+        fprintf(stderr, "iappend: invalid block address %u in inode %u (FSSIZE=%d)\n", x, inum, FSSIZE);
+        exit(1);
+      }
     } else {
       if(xint(din.addrs[NDIRECT]) == 0){
+        if(freeblock >= FSSIZE){
+          fprintf(stderr, "iappend: out of blocks allocating indirect (freeblock=%u, FSSIZE=%d)\n", freeblock, FSSIZE);
+          exit(1);
+        }
         din.addrs[NDIRECT] = xint(freeblock++);
       }
-      rsect(xint(din.addrs[NDIRECT]), (char*)indirect);
+      x = xint(din.addrs[NDIRECT]);
+      if(x >= FSSIZE) {
+        fprintf(stderr, "iappend: invalid indirect block address %u in inode %u (FSSIZE=%d)\n", x, inum, FSSIZE);
+        exit(1);
+      }
+      rsect(x, (char*)indirect);
       if(indirect[fbn - NDIRECT] == 0){
+        if(freeblock >= FSSIZE){
+          fprintf(stderr, "iappend: out of blocks in indirect block (freeblock=%u, FSSIZE=%d)\n", freeblock, FSSIZE);
+          exit(1);
+        }
         indirect[fbn - NDIRECT] = xint(freeblock++);
-        wsect(xint(din.addrs[NDIRECT]), (char*)indirect);
+        wsect(x, (char*)indirect);
       }
       x = xint(indirect[fbn-NDIRECT]);
+      if(x >= FSSIZE) {
+        fprintf(stderr, "iappend: invalid data block address %u in indirect block (FSSIZE=%d)\n", x, FSSIZE);
+        exit(1);
+      }
     }
     n1 = min(n, (fbn + 1) * BSIZE - off);
     rsect(x, buf);
