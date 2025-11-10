@@ -63,5 +63,8 @@ float_eq(float a, float b, float epsilon)
   return diff < epsilon;
 }
 
+void run_stdlib_tests(struct test_result *total_tr);
+int stdlib_suite_main(void);
+
 #endif // TEST_MILESTONE2_H
 
