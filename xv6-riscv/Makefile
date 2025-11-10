@@ -147,7 +147,7 @@ $K/%.o: $K/%.S
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/xv6_stdlib.o
 
 ifeq ($(LAB),lock)
 ULIB += $U/statistics.o
@@ -157,6 +157,28 @@ _%: %.o $(ULIB) $U/user.ld
 	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $< $(ULIB)
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+
+# Special compilation rule for test_stdlib.o when used by tm2
+$U/test_stdlib_for_milestone2.o: $U/test_stdlib.c
+	$(CC) $(CFLAGS) -DTEST_MILESTONE2_MAIN -c -o $@ $<
+
+# Explicit rule for test_stdlib (source name doesn't match executable pattern)
+$U/_test_stdlib: $U/test_stdlib.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/test_stdlib.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/test_stdlib.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_stdlib.sym
+
+# Special rule for tm2: link with test_stdlib.o (without main)
+$U/_tm2: $U/test_milestone2.o $U/test_stdlib_for_milestone2.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/test_milestone2.o $U/test_stdlib_for_milestone2.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/test_milestone2.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_milestone2.sym
+
+# Explicit rule for test_milestone2 to link test_stdlib without its standalone main
+$U/_test_milestone2: $U/test_milestone2.o $U/test_stdlib_for_milestone2.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/test_milestone2.o $U/test_stdlib_for_milestone2.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/test_milestone2.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_milestone2.sym
 
 $U/usys.S : $U/usys.pl
 	perl $U/usys.pl > $U/usys.S
@@ -221,6 +243,8 @@ UPROGS=\
 	$U/_logstress\
 	$U/_forphan\
 	$U/_dorphan\
+	$U/_test_stdlib\
+	$U/_tm2\
 
 
 
