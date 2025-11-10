@@ -270,8 +270,8 @@ int test_sprintf_float(void) {
 
     // Test float with precision
     xv6_sprintf_f(buf, "Value: %.2f", 1.5678);
-    if (xv6_strcmp(buf, "Value: 1.56") != 0) {
-        printf("Expected 'Value: 1.56', got '%s'\n", buf);
+    if (xv6_strcmp(buf, "Value: 1.57") != 0) {
+        printf("Expected 'Value: 1.57', got '%s'\n", buf);
         pass = 0;
     }
 

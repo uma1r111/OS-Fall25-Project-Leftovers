@@ -115,16 +115,16 @@ float xv6_atof(const char *s) {
 // Convert integer to string
 static int itoa(int val, char *buf, int is_negative) {
     char tmp[32];
-    int i = 0;
-    int len = 0;
-    uint uval;
-    
+    int i = 0, len = 0;
+    unsigned int uval;
+
     if (is_negative) {
-        uval = -val;
+        buf[len++] = '-';
+        uval = (unsigned int)(-val);
     } else {
-        uval = val;
+        uval = (unsigned int)val;
     }
-    
+
     if (uval == 0) {
         tmp[i++] = '0';
     } else {
@@ -133,48 +133,52 @@ static int itoa(int val, char *buf, int is_negative) {
             uval /= 10;
         }
     }
-    
-    if (is_negative) {
-        buf[len++] = '-';
-    }
-    
-    // Reverse
-    while (i > 0) {
-        buf[len++] = tmp[--i];
-    }
-    
+
+    while (i > 0) buf[len++] = tmp[--i];
     return len;
 }
+
 
 // Convert float to string with precision
 static int ftoa(float val, char *buf, int precision) {
     int len = 0;
-    int int_part;
-    float frac_part;
     int is_negative = 0;
-    
+
     if (val < 0) {
         is_negative = 1;
         val = -val;
     }
-    
-    // Integer part
-    int_part = (int)val;
-    frac_part = val - int_part;
-    
-    len = itoa(int_part, buf, is_negative);
-    
+
+    // Scaling factor for fractional digits
+    unsigned int factor = 1;
+    for (int i = 0; i < precision; i++) {
+        factor *= 10;
+    }
+
+    // Apply rounding in scaled integer space
+    float scaled = val * (float)factor + 0.5f;
+    unsigned int scaled_int = (unsigned int)scaled;
+
+    unsigned int int_part = factor ? (scaled_int / factor) : (unsigned int)val;
+    unsigned int frac_int = factor ? (scaled_int % factor) : 0;
+
+    if (is_negative) {
+        buf[len++] = '-';
+    }
+
+    len += itoa((int)int_part, buf + len, 0);
+
     // Decimal point
     buf[len++] = '.';
-    
-    // Fractional part
-    for (int i = 0; i < precision; i++) {
-        frac_part *= 10;
-        int digit = (int)frac_part;
-        buf[len++] = '0' + digit;
-        frac_part -= digit;
+
+    // Extract digits, ensuring leading zeros for the fractional part
+    for (int i = precision - 1; i >= 0; i--) {
+        buf[len + i] = '0' + (frac_int % 10);
+        frac_int /= 10;
     }
-    
+    len += precision;
+
+    buf[len] = '\0';
     return len;
 }
 

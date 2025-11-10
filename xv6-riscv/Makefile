@@ -189,6 +189,23 @@ $U/_mathtest: $U/mathtest.o $U/xv6_maths.o $(ULIB)
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/mathtest.sym
 
 # ============================================================================
+# Special linking rule for maintestrunner - needs multiple test object files
+# Use --allow-multiple-definition to allow multiple main() and other duplicate symbols
+# ============================================================================
+$U/_maintestrunner: $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/maintestrunner.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/maintestrunner.sym
+
+# ============================================================================
+# Special linking rule for test_milestone2 (built as _tm2) - same as maintestrunner
+# ============================================================================
+$U/_tm2: $U/test_milestone2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/test_milestone2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
+	$(OBJDUMP) -S $@ > $U/test_milestone2.asm
+	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/test_milestone2.sym
+
+# ============================================================================
 # Generic rule for other user programs
 # ============================================================================
 _%: %.o $(ULIB) $U/user.ld
@@ -233,6 +250,7 @@ UPROGS=\
 	$U/_dorphan\
 	$U/_test_string\
 	$U/_test_stdlib\
+	$U/_tm2\
 \
 
 
