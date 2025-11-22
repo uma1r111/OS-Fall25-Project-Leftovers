@@ -254,6 +254,7 @@ UPROGS=\
 	$U/_test_stdlib\
 	$U/_tm2\
 	$U/_memcheck\
+	$U/_sha256\
 \
 
 
