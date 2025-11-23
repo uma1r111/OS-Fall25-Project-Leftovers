@@ -149,7 +149,7 @@ $K/%.o: $K/%.S
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o $U/sha256.o $U/udp_client.o
 
 ifeq ($(LAB),lock)
 ULIB += $U/statistics.o
@@ -254,7 +254,7 @@ UPROGS=\
 	$U/_test_stdlib\
 	$U/_tm2\
 	$U/_memcheck\
-	$U/_sha256\
+	$U/_download_test\
 \
 
 
