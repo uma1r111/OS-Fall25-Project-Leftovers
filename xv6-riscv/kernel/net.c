@@ -112,10 +112,33 @@ sys_bind(void)
 uint64
 sys_unbind(void)
 {
-  //
-  // Optional: Your code here.
-  //
+  int port;
+  argint(0, &port);
+  if(port < 0 || port > 0xffff)
+    return -1;
 
+  acquire(&netlock);
+  struct udp_port *slot = udp_lookup(port);
+  if(slot == 0){
+    release(&netlock);
+    return -1;
+  }
+  acquire(&slot->lock);
+  release(&netlock);
+
+  // Free any queued packets
+  for(int i = 0; i < slot->count; i++){
+    int idx = (slot->head + i) % UDP_QUEUE_MAX;
+    if(slot->pkts[idx].buf)
+      kfree(slot->pkts[idx].buf);
+  }
+
+  // Reset the slot
+  slot->head = slot->tail = slot->count = 0;
+  memset(slot->pkts, 0, sizeof(slot->pkts));
+  slot->used = 0;
+
+  release(&slot->lock);
   return 0;
 }
 
