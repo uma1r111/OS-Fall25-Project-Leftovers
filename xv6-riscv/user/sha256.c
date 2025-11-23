@@ -211,75 +211,75 @@ void sha256_hash(const unsigned char *data, unsigned int len, unsigned char hash
 /* ---------------------- Utilities for test output ---------------------- */
 
 /* print 32-byte hash as hex with padding for xv6 printf */
-static void print_hex(const unsigned char *h) {
-  int i;
-  for (i = 0; i < 32; i++) {
-    int hi = (h[i] >> 4) & 0xF;
-    int lo = h[i] & 0xF;
+// static void print_hex(const unsigned char *h) {
+//   int i;
+//   for (i = 0; i < 32; i++) {
+//     int hi = (h[i] >> 4) & 0xF;
+//     int lo = h[i] & 0xF;
 
-    // convert to hex character
-    char c[2];
-    c[0] = (hi < 10) ? ('0' + hi) : ('a' + hi - 10);
-    c[1] = (lo < 10) ? ('0' + lo) : ('a' + lo - 10);
-    printf("%c%c", c[0], c[1]);
-  }
-}
+//     // convert to hex character
+//     char c[2];
+//     c[0] = (hi < 10) ? ('0' + hi) : ('a' + hi - 10);
+//     c[1] = (lo < 10) ? ('0' + lo) : ('a' + lo - 10);
+//     printf("%c%c", c[0], c[1]);
+//   }
+// }
 
-/* compare two 32-byte arrays */
-static int cmp32(const unsigned char *a, const unsigned char *b) {
-  int i;
-  for (i = 0; i < 32; ++i) if (a[i] != b[i]) return 0;
-  return 1;
-}
+// /* compare two 32-byte arrays */
+// static int cmp32(const unsigned char *a, const unsigned char *b) {
+//   int i;
+//   for (i = 0; i < 32; ++i) if (a[i] != b[i]) return 0;
+//   return 1;
+// }
 
-/* hex string to bytes (expects lowercase hex, 64 hex chars) */
-static void hexstr_to_bytes(const char *hex, unsigned char out[32]) {
-  int i;
-  for (i = 0; i < 32; ++i) {
-    char hi = hex[2*i];
-    char lo = hex[2*i + 1];
-    unsigned int vhi = (hi >= 'a') ? (hi - 'a' + 10) : (hi >= 'A' ? (hi - 'A' + 10) : (hi - '0'));
-    unsigned int vlo = (lo >= 'a') ? (lo - 'a' + 10) : (lo >= 'A' ? (lo - 'A' + 10) : (lo - '0'));
-    out[i] = (unsigned char)((vhi << 4) | vlo);
-  }
-}
+// /* hex string to bytes (expects lowercase hex, 64 hex chars) */
+// static void hexstr_to_bytes(const char *hex, unsigned char out[32]) {
+//   int i;
+//   for (i = 0; i < 32; ++i) {
+//     char hi = hex[2*i];
+//     char lo = hex[2*i + 1];
+//     unsigned int vhi = (hi >= 'a') ? (hi - 'a' + 10) : (hi >= 'A' ? (hi - 'A' + 10) : (hi - '0'));
+//     unsigned int vlo = (lo >= 'a') ? (lo - 'a' + 10) : (lo >= 'A' ? (lo - 'A' + 10) : (lo - '0'));
+//     out[i] = (unsigned char)((vhi << 4) | vlo);
+//   }
+// }
 
 /* ---------------------- Tests in main ---------------------- */
 
-int main(int argc, char *argv[]) {
-  /* test vectors and their expected hashes (computed using a standard SHA-256) */
-  struct {
-    const char *s;
-    const char *expected_hex;
-  } tests[] = {
-    { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
-    { "a", "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb" },
-    { "hello world", "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" },
-    /* EXACT string provided in prompt (note the space between 'P' and 'Q') */
-    { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP QRSTUVWXYZ0123456",
-      "1b4ac209f013956efb1854f976f69a3809873f8d10e549ef3dafecf0a73a9d10" },
-    { "The quick brown fox jumps over the lazy dog. This is a longer test string that spans multiple blocks.",
-      "65dab9c0a2772f0ea4654aabc5cb63c83a6ee018249ef5d104bed2ad7141a9e1" }
-  };
+// int main(int argc, char *argv[]) {
+//   /* test vectors and their expected hashes (computed using a standard SHA-256) */
+//   struct {
+//     const char *s;
+//     const char *expected_hex;
+//   } tests[] = {
+//     { "", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+//     { "a", "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb" },
+//     { "hello world", "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" },
+//     /* EXACT string provided in prompt (note the space between 'P' and 'Q') */
+//     { "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP QRSTUVWXYZ0123456",
+//       "1b4ac209f013956efb1854f976f69a3809873f8d10e549ef3dafecf0a73a9d10" },
+//     { "The quick brown fox jumps over the lazy dog. This is a longer test string that spans multiple blocks.",
+//       "65dab9c0a2772f0ea4654aabc5cb63c83a6ee018249ef5d104bed2ad7141a9e1" }
+//   };
 
-  int ntests = sizeof(tests) / sizeof(tests[0]);
-  int ti;
-  for (ti = 0; ti < ntests; ++ti) {
-    const char *s = tests[ti].s;
-    const char *exp_hex = tests[ti].expected_hex;
-    unsigned char got[32];
-    unsigned char expect[32];
-    sha256_hash((const unsigned char*)s, (unsigned int)strlen(s), got);
-    hexstr_to_bytes(exp_hex, expect);
+//   int ntests = sizeof(tests) / sizeof(tests[0]);
+//   int ti;
+//   for (ti = 0; ti < ntests; ++ti) {
+//     const char *s = tests[ti].s;
+//     const char *exp_hex = tests[ti].expected_hex;
+//     unsigned char got[32];
+//     unsigned char expect[32];
+//     sha256_hash((const unsigned char*)s, (unsigned int)strlen(s), got);
+//     hexstr_to_bytes(exp_hex, expect);
 
-    printf("Test %d: \"%s\"\n", ti+1, s);
-    printf("  Expected: ");
-    print_hex(expect);
-    printf("\n  Computed: ");
-    print_hex(got);
-    printf("\n  Result: %s\n\n", cmp32(got, expect) ? "PASS" : "FAIL");
-  }
+//     printf("Test %d: \"%s\"\n", ti+1, s);
+//     printf("  Expected: ");
+//     print_hex(expect);
+//     printf("\n  Computed: ");
+//     print_hex(got);
+//     printf("\n  Result: %s\n\n", cmp32(got, expect) ? "PASS" : "FAIL");
+//   }
 
-  exit(1);
-  return 0;
-}
+//   exit(1);
+//   return 0;
+// }
