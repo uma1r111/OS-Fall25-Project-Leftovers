@@ -19,10 +19,60 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+#define UDP_QUEUE_MAX 16
+#define UDP_PORT_SLOTS 64
+
+struct udp_packet {
+  char *buf;
+  int payload_len;
+  int payload_offset;
+  uint32 src_ip;
+  uint16 src_port;
+};
+
+struct udp_port {
+  struct spinlock lock;
+  int used;
+  uint16 port;
+  int head;
+  int tail;
+  int count;
+  struct udp_packet pkts[UDP_QUEUE_MAX];
+};
+
+static struct udp_port udp_ports[UDP_PORT_SLOTS];
+
+static struct udp_port*
+udp_lookup(uint16 port)
+{
+  for(int i = 0; i < UDP_PORT_SLOTS; i++){
+    if(udp_ports[i].used && udp_ports[i].port == port)
+      return &udp_ports[i];
+  }
+  return 0;
+}
+
+static struct udp_port*
+udp_alloc(uint16 port)
+{
+  for(int i = 0; i < UDP_PORT_SLOTS; i++){
+    if(!udp_ports[i].used){
+      udp_ports[i].used = 1;
+      udp_ports[i].port = port;
+      udp_ports[i].head = udp_ports[i].tail = udp_ports[i].count = 0;
+      memset(udp_ports[i].pkts, 0, sizeof(udp_ports[i].pkts));
+      return &udp_ports[i];
+    }
+  }
+  return 0;
+}
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  for(int i = 0; i < UDP_PORT_SLOTS; i++)
+    initlock(&udp_ports[i].lock, "udpport");
 }
 
 
@@ -34,11 +84,24 @@ netinit(void)
 uint64
 sys_bind(void)
 {
-  //
-  // Your code here.
-  //
+  int port;
+  argint(0, &port);
+  if(port < 0 || port > 0xffff)
+    return -1;
 
-  return -1;
+  acquire(&netlock);
+  if(udp_lookup(port)){
+    release(&netlock);
+    return -1;
+  }
+
+  struct udp_port *slot = udp_alloc(port);
+  release(&netlock);
+
+  if(slot == 0)
+    return -1;
+
+  return 0;
 }
 
 //
@@ -49,10 +112,33 @@ sys_bind(void)
 uint64
 sys_unbind(void)
 {
-  //
-  // Optional: Your code here.
-  //
+  int port;
+  argint(0, &port);
+  if(port < 0 || port > 0xffff)
+    return -1;
 
+  acquire(&netlock);
+  struct udp_port *slot = udp_lookup(port);
+  if(slot == 0){
+    release(&netlock);
+    return -1;
+  }
+  acquire(&slot->lock);
+  release(&netlock);
+
+  // Free any queued packets
+  for(int i = 0; i < slot->count; i++){
+    int idx = (slot->head + i) % UDP_QUEUE_MAX;
+    if(slot->pkts[idx].buf)
+      kfree(slot->pkts[idx].buf);
+  }
+
+  // Reset the slot
+  slot->head = slot->tail = slot->count = 0;
+  memset(slot->pkts, 0, sizeof(slot->pkts));
+  slot->used = 0;
+
+  release(&slot->lock);
   return 0;
 }
 
@@ -74,10 +160,60 @@ sys_unbind(void)
 uint64
 sys_recv(void)
 {
-  //
-  // Your code here.
-  //
-  return -1;
+  int dport;
+  uint64 srcaddr;
+  uint64 sportaddr;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  if(dport < 0 || dport > 0xffff || maxlen < 0)
+    return -1;
+
+  acquire(&netlock);
+  struct udp_port *slot = udp_lookup(dport);
+  if(slot == 0){
+    release(&netlock);
+    return -1;
+  }
+  acquire(&slot->lock);
+  release(&netlock);
+
+  while(slot->count == 0)
+    sleep(slot, &slot->lock);
+
+  struct udp_packet pkt = slot->pkts[slot->head];
+  slot->head = (slot->head + 1) % UDP_QUEUE_MAX;
+  slot->count -= 1;
+
+  release(&slot->lock);
+
+  struct proc *p = myproc();
+  int copylen = pkt.payload_len;
+  if(copylen > maxlen)
+    copylen = maxlen;
+
+  if(copyout(p->pagetable, bufaddr, pkt.buf + pkt.payload_offset, copylen) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+  if(copyout(p->pagetable, srcaddr, (char *)&pkt.src_ip, sizeof(pkt.src_ip)) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+  if(copyout(p->pagetable, sportaddr, (char *)&pkt.src_port, sizeof(pkt.src_port)) < 0){
+    kfree(pkt.buf);
+    return -1;
+  }
+
+  kfree(pkt.buf);
+
+  return copylen;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -188,10 +324,79 @@ ip_rx(char *buf, int len)
     printf("ip_rx: received an IP packet\n");
   seen_ip = 1;
 
-  //
-  // Your code here.
-  //
-  
+  if(len < sizeof(struct eth) + sizeof(struct ip)){
+    kfree(buf);
+    return;
+  }
+
+  struct eth *eth = (struct eth *)buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+
+  int hlen = (ip->ip_vhl & 0x0f) * 4;
+  if(hlen < sizeof(struct ip)){
+    kfree(buf);
+    return;
+  }
+
+  int ip_len = ntohs(ip->ip_len);
+  if(ip_len < hlen + sizeof(struct udp)){
+    kfree(buf);
+    return;
+  }
+
+  if(len < sizeof(struct eth) + ip_len){
+    kfree(buf);
+    return;
+  }
+
+  if(ip->ip_p != IPPROTO_UDP){
+    kfree(buf);
+    return;
+  }
+
+  struct udp *udp = (struct udp *)(((char *)ip) + hlen);
+  int udp_len = ntohs(udp->ulen);
+  if(udp_len < sizeof(struct udp) || udp_len > ip_len - hlen){
+    kfree(buf);
+    return;
+  }
+
+  int payload_len = udp_len - sizeof(struct udp);
+  int payload_offset = (int)((char *)(udp + 1) - buf);
+  if(payload_offset + payload_len > len){
+    kfree(buf);
+    return;
+  }
+
+  uint16 dport = ntohs(udp->dport);
+
+  acquire(&netlock);
+  struct udp_port *slot = udp_lookup(dport);
+  if(slot == 0){
+    release(&netlock);
+    kfree(buf);
+    return;
+  }
+  acquire(&slot->lock);
+  release(&netlock);
+
+  if(slot->count == UDP_QUEUE_MAX){
+    release(&slot->lock);
+    kfree(buf);
+    return;
+  }
+
+  struct udp_packet *pkt = &slot->pkts[slot->tail];
+  pkt->buf = buf;
+  pkt->payload_len = payload_len;
+  pkt->payload_offset = payload_offset;
+  pkt->src_ip = ntohl(ip->ip_src);
+  pkt->src_port = ntohs(udp->sport);
+  slot->tail = (slot->tail + 1) % UDP_QUEUE_MAX;
+  slot->count += 1;
+
+  wakeup(slot);
+  release(&slot->lock);
 }
 
 //

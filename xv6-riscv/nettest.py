@@ -144,26 +144,37 @@ elif sys.argv[1] == "grade":
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('127.0.0.1', SERVERPORT))
 
+    print(f"[host] grade: listening on SERVERPORT={SERVERPORT} for txone packet")
     # first, listen for a single UDP packet sent by xv6,
     # in order to test only e1000_transmit(), in a situation
     # where perhaps e1000_recv() has not yet been implemented.
     buf, raddr = sock.recvfrom(4096)
     if buf == b'txone':
-        print("txone: OK")
+        print("[host] txone: OK (received %d bytes from %s:%d)" %
+              (len(buf), raddr[0], raddr[1]))
     else:
-        print("txone: received incorrect payload %s" % (buf))
+        print("[host] txone: received incorrect payload %s" % (buf))
     sys.stdout.flush()
     sys.stderr.flush()
 
     # second, send a single UDP packet, to test
     # e1000_recv() -- received by user/nettest.c's rxone().
-    print("rxone: sending one UDP packet")
+    print(f"[host] rxone: sending one UDP packet via FWDPORT2={FWDPORT2}")
     sock1 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock1.sendto(b'rxone', ("127.0.0.1", FWDPORT2))
+    print("[host] rxone: packet dispatched")
 
+    print("[host] ping reflector: waiting for xv6 traffic...")
     # third, act as a ping reflector.
-    while True:
-        buf, raddr = sock.recvfrom(4096)
-        sock.sendto(buf, raddr)
+    total = 0
+    try:
+        while True:
+            buf, raddr = sock.recvfrom(4096)
+            total += 1
+            print("[host] reflector: echoing packet #%d (len=%d) from %s:%d" %
+                  (total, len(buf), raddr[0], raddr[1]))
+            sock.sendto(buf, raddr)
+    except KeyboardInterrupt:
+        print("[host] reflector: interrupted, forwarded %d packets" % total)
 else:
     usage()

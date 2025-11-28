@@ -94,6 +94,8 @@ OBJDUMP = $(TOOLPREFIX)objdump
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 
+XCFLAGS += -DSOL_COW -DLAB_COW
+
 ifdef LAB
 LABUPPER = $(shell echo $(LAB) | tr a-z A-Z)
 XCFLAGS += -DSOL_$(LABUPPER) -DLAB_$(LABUPPER)
@@ -147,7 +149,7 @@ $K/%.o: $K/%.S
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o $U/sha256.o $U/udp_client.o
 
 ifeq ($(LAB),lock)
 ULIB += $U/statistics.o
@@ -251,6 +253,8 @@ UPROGS=\
 	$U/_test_string\
 	$U/_test_stdlib\
 	$U/_tm2\
+	$U/_memcheck\
+	$U/_download_test\
 \
 
 
@@ -286,10 +290,8 @@ UPROGS += \
 	$U/_lazytests
 endif
 
-ifeq ($(LAB),cow)
 UPROGS += \
-	$U/_cowtest
-endif
+$U/_cowtest
 
 ifeq ($(LAB),thread)
 UPROGS += \
