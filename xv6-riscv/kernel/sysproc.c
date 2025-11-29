@@ -107,3 +107,21 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64 sys_rdtime(void) {
+    uint64 x;
+    asm volatile("csrr %0, time" : "=r" (x)); 
+    return x;
+}
+
+uint64 sys_rdcycle(void) {
+    uint64 x;
+    asm volatile("csrr %0, cycle" : "=r" (x));  
+    return x;
+}
+
+uint64 sys_rdinstret(void) {
+    uint64 x;
+    asm volatile("csrr %0, instret" : "=r" (x));  
+    return x;
+}

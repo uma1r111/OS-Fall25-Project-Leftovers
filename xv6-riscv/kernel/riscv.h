@@ -233,6 +233,13 @@ r_sepc()
   return x;
 }
 
+// Write supervisor counter enable register
+static inline void
+w_scounteren(uint64 x)
+{
+  asm volatile("csrw scounteren, %0" : : "r" (x));
+}
+
 // Machine Exception Delegation
 static inline uint64
 r_medeleg()
@@ -450,6 +457,25 @@ sfence_vma()
   // the zero, zero means flush all TLB entries.
   asm volatile("sfence.vma zero, zero");
 }
+
+// machine-mode cycle counter (you already have this)
+static inline uint64
+r_cycle()
+{
+  uint64 x;
+  asm volatile("csrr %0, cycle" : "=r" (x));
+  return x;
+}
+
+// machine-mode instruction counter (you already have this)
+static inline uint64
+r_instret()
+{
+  uint64 x;
+  asm volatile("csrr %0, instret" : "=r" (x));
+  return x;
+}
+
 
 typedef uint64 pte_t;
 typedef uint64 *pagetable_t; // 512 PTEs

@@ -6,23 +6,20 @@
 
 volatile static int started = 0;
 
+// Enable user-mode access to performance counters
+void
+enable_perf_counters(void)
+{
+  // Enable cycle (bit 0), time (bit 1), instret (bit 2)
+  w_scounteren(0x7);
+}
+
 // start() jumps here in supervisor mode on all CPUs.
 void
 main()
 {
-  // ---------------------------------------------------------------------------
-  // Enable FPU in Supervisor Mode (FS = Initial)
-  // ---------------------------------------------------------------------------
-  unsigned long x = r_sstatus();
-  x &= ~SSTATUS_FS;          // clear FS bits
-  x |= SSTATUS_FS_INITIAL;   // set FS = Initial (01)
-  w_sstatus(x);
-
   if(cpuid() == 0){
     consoleinit();
-#if defined(LAB_LOCK)
-    statsinit();
-#endif
     printfinit();
     printf("\n");
     printf("xv6 kernel is booting\n");
@@ -39,28 +36,22 @@ main()
     iinit();         // inode table
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
-#ifdef LAB_NET
-    pci_init();
-    netinit();
-#endif    
+    // Enable performance counters
+    enable_perf_counters();
     userinit();      // first user process
-#ifdef KCSAN
-    kcsaninit();
-#endif
     __sync_synchronize();
     started = 1;
   } else {
-    while(atomic_read4((int *) &started) == 0)
+    while(started == 0)
       ;
     __sync_synchronize();
     printf("hart %d starting\n", cpuid());
     kvminithart();    // turn on paging
     trapinithart();   // install kernel trap vector
     plicinithart();   // ask PLIC for device interrupts
+    // Enable on other CPUs too
+    enable_perf_counters();
   }
 
-#ifdef LAB_LOCK
-  rwspinlock_test();
-#endif
   scheduler();        
 }

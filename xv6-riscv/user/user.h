@@ -29,6 +29,9 @@ int getpid(void);
 char* sys_sbrk(int,int);
 int pause(int);
 int uptime(void);
+uint64 rdcycle(void);
+uint64 rdtime(void);
+uint64 rdinstret(void);
 #ifdef LAB_NET
 int bind(uint16);
 int unbind(uint16);
@@ -74,3 +77,4 @@ void* bsearch(const void *key, const void *base, uint nmemb, uint size,
 void qsort(void *base, uint nmemb, uint size,
            int (*compar)(const void *, const void *));
 float atof(const char *nptr);
+

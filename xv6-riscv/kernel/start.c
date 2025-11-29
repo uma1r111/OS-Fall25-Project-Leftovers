@@ -64,6 +64,10 @@ start(void)
   w_pmpaddr0(0x3fffffffffffffull);
   w_pmpcfg0(0xf);
 
+  // Enable cycle, time, and instret counters for supervisor mode
+  // bit 0: cycle, bit 1: time, bit 2: instret
+  w_mcounteren(r_mcounteren() | 0x7);
+
   // ask for clock interrupts.
   timerinit();
 
@@ -92,4 +96,7 @@ timerinit(void)
 
   // schedule the first timer interrupt.
   w_stimecmp(r_time() + 1000000);
+
+  w_mcounteren(r_mcounteren() | 0x7);
+
 }
