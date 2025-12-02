@@ -36,6 +36,14 @@ main()
     iinit();         // inode table
     fileinit();      // file table
     virtio_disk_init(); // emulated hard disk
+
+    // --- ADD THESE LINES ---
+    #ifdef LAB_NET
+    pci_init();      // Initialize the PCI bus (finds E1000 card)
+    netinit();      // Initialize the socket layer
+    #endif
+    // -----------------------
+
     // Enable performance counters
     enable_perf_counters();
     userinit();      // first user process

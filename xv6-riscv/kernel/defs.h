@@ -230,6 +230,7 @@ void            kcsaninit();
 #ifdef LAB_NET
 // pci.c
 void            pci_init();
+void            netinit(void);
 
 // e1000.c
 void            e1000_init(uint32 *);

@@ -90,6 +90,7 @@ AS = $(TOOLPREFIX)gas
 LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
+STRIP = $(TOOLPREFIX)strip
 
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
@@ -104,6 +105,7 @@ endif
 CFLAGS += $(XCFLAGS)
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
+CFLAGS += -DLAB_NET
 CFLAGS += -ffreestanding
 CFLAGS += -fno-common -nostdlib
 CFLAGS += -fno-builtin-strncpy -fno-builtin-strncmp -fno-builtin-strlen -fno-builtin-memset
@@ -149,7 +151,7 @@ $K/%.o: $K/%.S
 tags: $(OBJS)
 	etags kernel/*.S kernel/*.c
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o $U/sha256.o $U/udp_client.o
+ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o $U/string.o $U/xv6_stdlib.o $U/sha256.o $U/udp_client.o $U/xv6_maths.o
 
 ifeq ($(LAB),lock)
 ULIB += $U/statistics.o
@@ -157,6 +159,7 @@ endif
 
 _%: %.o $(ULIB) $U/user.ld
 	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $< $(ULIB)
+	$(STRIP) $@
 	$(OBJDUMP) -S $@ > $*.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
 
@@ -185,8 +188,8 @@ $U/_forktest: $U/forktest.o $(ULIB)
 # ============================================================================
 # Special linking rule for mathtest - needs math library
 # ============================================================================
-$U/_mathtest: $U/mathtest.o $U/xv6_maths.o $(ULIB)
-	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/mathtest.o $U/xv6_maths.o $(ULIB)
+$U/_mathtest: $U/mathtest.o $(ULIB)
+	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $U/mathtest.o $(ULIB)
 	$(OBJDUMP) -S $@ > $U/mathtest.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/mathtest.sym
 
@@ -194,16 +197,16 @@ $U/_mathtest: $U/mathtest.o $U/xv6_maths.o $(ULIB)
 # Special linking rule for maintestrunner - needs multiple test object files
 # Use --allow-multiple-definition to allow multiple main() and other duplicate symbols
 # ============================================================================
-$U/_maintestrunner: $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
-	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
+$U/_maintestrunner: $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/maintestrunner.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $(ULIB)
 	$(OBJDUMP) -S $@ > $U/maintestrunner.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/maintestrunner.sym
 
 # ============================================================================
 # Special linking rule for tm2 (unified test runner)
 # ============================================================================
-$U/_tm2: $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB) $U/user.ld
-	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $U/xv6_maths.o $(ULIB)
+$U/_tm2: $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $(ULIB) $U/user.ld
+	$(LD) $(LDFLAGS) --allow-multiple-definition -T $U/user.ld -o $@ $U/tm2.o $U/mathtest.o $U/test_string.o $U/test_stdlib.o $(ULIB)
 	$(OBJDUMP) -S $@ > $U/tm2.asm
 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $U/tm2.sym
 
@@ -243,7 +246,6 @@ UPROGS=\
 	$U/_rm\
 	$U/_sh\
 	$U/_stressfs\
-	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
@@ -256,9 +258,10 @@ UPROGS=\
 	$U/_memcheck\
 	$U/_download_test\
 	$U/_rdtime_test\
+	$U/_llm\
 \
 
-
+# $U/_usertests\
 
 ifeq ($(LAB),util)
 UPROGS += \
