@@ -25,6 +25,27 @@ typedef unsigned long size_t;
 // Helpers (Missing in xv6)
 // ----------------------------------------------------------------------------
 
+#include "kernel/types.h"
+#include "user/user.h" 
+// ... other headers ...
+
+// Define the structure to hold metrics
+struct ProfilingData {
+    unsigned long long start_time;
+    unsigned long long ttft_end;     // Time to First Token
+    unsigned long long end_time;     
+    unsigned long long total_matmul;
+    unsigned long long total_attention;
+    unsigned long long total_ffn;
+    unsigned long long total_activation;
+    unsigned long long total_sampling;
+    int first_token_flag;
+    int total_tokens_generated;
+    int prompt_tokens;
+};
+
+struct ProfilingData prof; // Global instance
+
 int abs(int x) {
     return (x < 0) ? -x : x;
 }
@@ -206,6 +227,7 @@ void free_transformer(Transformer* t) {
 // neural net blocks; the dynamics of the Transformer
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
+    unsigned long long start = rdcycle();
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
         ss += x[j] * x[j];
@@ -216,9 +238,12 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     for (int j = 0; j < size; j++) {
         o[j] = weight[j] * (ss * x[j]);
     }
+    unsigned long long end = rdcycle();
+    prof.total_activation += (end - start);
 }
 
 void softmax(float* x, int size) {
+    unsigned long long start = rdcycle();
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) {
@@ -233,11 +258,14 @@ void softmax(float* x, int size) {
     for (int i = 0; i < size; i++) {
         x[i] /= sum;
     }
+    unsigned long long end = rdcycle();
+    prof.total_activation += (end - start);
 }
 
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
     // REMOVED OMP PARALLEL
+    unsigned long long start = rdcycle();
     for (int i = 0; i < d; i++) {
         float val = 0.0f;
         for (int j = 0; j < n; j++) {
@@ -245,6 +273,8 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
         }
         xout[i] = val;
     }
+    unsigned long long end = rdcycle();
+    prof.total_matmul += (end - start);
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
@@ -262,6 +292,9 @@ float* forward(Transformer* transformer, int token, int pos) {
     memcpy(x, content_row, dim*sizeof(*x));
 
     for(unsigned long long l = 0; l < p->n_layers; l++) {
+        // Attention Section
+        unsigned long long att_start = rdcycle();
+        
         rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
 
         int loff = l * p->seq_len * kv_dim; 
@@ -320,24 +353,37 @@ float* forward(Transformer* transformer, int token, int pos) {
         for (int i = 0; i < dim; i++) {
             x[i] += s->xb2[i];
         }
+        
+        unsigned long long att_end = rdcycle();
+        prof.total_attention += (att_end - att_start);
 
+        // Feed-Forward Network (FFN) Section
+        unsigned long long ffn_start = rdcycle();
+        
         rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
+        // SwiGLU Activation - instrument separately for activation timing
+        unsigned long long swiglu_start = rdcycle();
         for (int i = 0; i < hidden_dim; i++) {
             float val = s->hb[i];
             val *= (1.0f / (1.0f + expf(-val)));
             val *= s->hb2[i];
             s->hb[i] = val;
         }
+        unsigned long long swiglu_end = rdcycle();
+        prof.total_activation += (swiglu_end - swiglu_start);
 
         matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         for (int i = 0; i < dim; i++) {
             x[i] += s->xb[i];
         }
+        
+        unsigned long long ffn_end = rdcycle();
+        prof.total_ffn += (ffn_end - ffn_start);
     }
 
     rmsnorm(x, x, w->rms_final_weight, dim);
@@ -658,6 +704,7 @@ float random_f32(unsigned long long *state) {
 }
 
 int sample(Sampler* sampler, float* logits) {
+    unsigned long long start = rdcycle();
     int next;
     if (sampler->temperature == 0.0f) {
         next = sample_argmax(logits, sampler->vocab_size);
@@ -671,6 +718,8 @@ int sample(Sampler* sampler, float* logits) {
             next = sample_topp(logits, sampler->vocab_size, sampler->topp, sampler->probindex, coin);
         }
     }
+    unsigned long long end = rdcycle();
+    prof.total_sampling += (end - start);
     return next;
 }
 
@@ -687,9 +736,20 @@ unsigned long long get_time() {
 // Generation Loop
 // ----------------------------------------------------------------------------
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
+int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
     char *empty_prompt = "";
     if (prompt == 0) { prompt = empty_prompt; }
+
+    // Initialize profiling
+    prof.start_time = rdcycle();
+    prof.first_token_flag = 0;
+    prof.total_tokens_generated = 0;
+    prof.prompt_tokens = 0;
+    prof.total_matmul = 0;
+    prof.total_attention = 0;
+    prof.total_ffn = 0;
+    prof.total_activation = 0;
+    prof.total_sampling = 0;
 
     int num_prompt_tokens = 0;
     int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int)); 
@@ -698,6 +758,9 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         fprintf(stderr, "something is wrong, expected at least 1 prompt token\n");
         exit(EXIT_FAILURE);
     }
+    
+    // Store prompt tokens count for profiling
+    prof.prompt_tokens = num_prompt_tokens;
 
     unsigned long long start = 0;  
     int next;        
@@ -711,6 +774,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             next = prompt_tokens[pos + 1];
         } else {
             next = sample(sampler, logits);
+            // Time to First Token (TTFT) - when we generate the first token after prompt
+            if (prof.first_token_flag == 0) {
+                prof.ttft_end = rdcycle();
+                prof.first_token_flag = 1;
+            }
         }
         pos++;
 
@@ -726,18 +794,69 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     }
     printf("\n");
 
+    // End of End-to-End Latency
+    prof.end_time = rdcycle();
+    
+    // Store total tokens generated (excluding prompt tokens)
+    int tokens_generated = pos - num_prompt_tokens;
+    prof.total_tokens_generated = tokens_generated;
+
     if (pos > 1) {
         unsigned long long end = get_time();
         // Printing raw cycles and an estimated tok/s assuming hypothetical MHz if needed, 
         // or just the cycle count delta as per instructions.
         unsigned long long cycles = end - start;
-        printf("Tokens generated: %d\n", pos-1);
+        printf("Tokens generated: %d\n", tokens_generated);
         printf("Total Cycles: %ld\n", (long)cycles);
         // Assuming 10MHz for QEMU default (very rough approx), 
-        // printf("Approx Tok/s: %f\n", (double)(pos-1) / ((double)cycles / 10000000.0));
+        // printf("Approx Tok/s: %f\n", (double)(tokens_generated) / ((double)cycles / 10000000.0));
     }
 
     free(prompt_tokens);
+    return tokens_generated;
+}
+void print_benchmark_results(void) {
+    unsigned long long total_cycles = prof.end_time - prof.start_time;
+    unsigned long long ttft_cycles = prof.ttft_end - prof.start_time;
+    
+    // TPS Calculation: generation_time is (end_time - ttft_end)
+    unsigned long long gen_cycles = prof.end_time - prof.ttft_end;
+    
+    // Calculate Percentages
+    // Note: Use simple integer math or basic float casting if supported
+    unsigned long long inference_sum = prof.total_matmul + prof.total_attention + prof.total_ffn + prof.total_sampling;
+    // If inference_sum is 0, avoid crash
+    if(inference_sum == 0) inference_sum = 1;
+
+    printf("\n=== BENCHMARK RESULTS ===\n");
+    printf("Prompt Tokens: %d\n", prof.prompt_tokens);
+    printf("Output Tokens: %d\n", prof.total_tokens_generated);
+    
+    printf("\nPRIMARY METRICS:\n");
+    printf("TTFT: %ld cycles\n", (long)ttft_cycles);
+    printf("End-to-End: %ld cycles\n", (long)total_cycles);
+    
+    // Print TPS as cycles per token (avoid division by zero)
+    if (prof.total_tokens_generated > 0 && gen_cycles > 0) {
+        unsigned long long cycles_per_token = gen_cycles / prof.total_tokens_generated;
+        printf("TPS (cycles/tok): %ld\n", (long)cycles_per_token);
+    } else {
+        printf("TPS (cycles/tok): N/A\n");
+    }
+
+    printf("\nHOTSPOT BREAKDOWN:\n");
+    printf("matmul: %ld%%\n", (long)((prof.total_matmul * 100) / inference_sum));
+    printf("Activations: %ld%%\n", (long)((prof.total_activation * 100) / inference_sum));
+    printf("Attention: %ld%%\n", (long)((prof.total_attention * 100) / inference_sum));
+    printf("FFN: %ld%%\n", (long)((prof.total_ffn * 100) / inference_sum));
+    printf("Sampling: %ld%%\n", (long)((prof.total_sampling * 100) / inference_sum));
+    
+    printf("\nRAW CYCLE COUNTS:\n");
+    printf("Total matmul: %ld cycles\n", (long)prof.total_matmul);
+    printf("Total activations: %ld cycles\n", (long)prof.total_activation);
+    printf("Total attention: %ld cycles\n", (long)prof.total_attention);
+    printf("Total FFN: %ld cycles\n", (long)prof.total_ffn);
+    printf("Total sampling: %ld cycles\n", (long)prof.total_sampling);
 }
 
 // ----------------------------------------------------------------------------
@@ -746,28 +865,41 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
 int main(int argc, char *argv[]) {
     // defaults
-    float temperature = 1.0f;   
+    float temperature = 0.0f;   // 0.0 for reproducibility
     float topp = 0.9f;          
-    int steps = 256;            
-    char *prompt = "Once upon a time"; // Default prompt for testing
-    unsigned long long rng_seed = 12345; // Fixed seed for reproducibility/testing
+    int output_tokens = 100;     // CHANGE THIS FOR EACH TEST
+    char *prompt = "The old lighthouse stood on the rocky cliff overlooking the vast ocean. For decades, it had guided ships safely through treacherous waters during stormy nights. The keeper, an elderly man named Thomas, climbed the spiral staircase every evening to light the beacon. He knew every crack in the walls and every creak of the wooden steps."; // CHANGE THIS FOR T3/T4
+    unsigned long long rng_seed = 12345;
 
-    // Simple arg parsing (Overriding default prompt if provided)
+    // Simple arg parsing (optional - can still override prompt if needed)
     if (argc > 1) {
         prompt = argv[1];
     }
-    // Further args could be parsed here using atoi/atof if needed, 
-    // but we keep it simple for xv6 integration.
-
+    
     // build the Transformer via UDP fetch
     Transformer transformer;
     build_transformer(&transformer);
-    
-    if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; 
 
     // build the Tokenizer via UDP fetch
     Tokenizer tokenizer;
     build_tokenizer(&tokenizer, transformer.config.vocab_size);
+
+    // Encode prompt to get prompt length
+    int num_prompt_tokens = 0;
+    int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int));
+    encode(&tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
+    
+    // Calculate total steps = prompt tokens + desired output tokens
+    int steps = num_prompt_tokens + output_tokens;
+    
+    if (steps > transformer.config.seq_len) {
+        steps = transformer.config.seq_len;
+    }
+    
+    printf("Prompt tokens: %d, Output tokens: %d, Total steps: %d\n", 
+           num_prompt_tokens, output_tokens, steps);
+    
+    free(prompt_tokens);
 
     // build the Sampler
     Sampler sampler;
@@ -780,6 +912,7 @@ int main(int argc, char *argv[]) {
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
+    print_benchmark_results();
     
     exit(0);
 }
