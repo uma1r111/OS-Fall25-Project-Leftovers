@@ -38,3 +38,6 @@
 #define SYS_rdcycle   35
 #define SYS_rdtime    36
 #define SYS_rdinstret 37
+#define SYS_thread_create 38
+#define SYS_thread_join   39
+#define SYS_thread_exit   40

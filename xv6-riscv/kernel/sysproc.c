@@ -16,6 +16,41 @@ sys_exit(void)
   return 0;  // not reached
 }
 
+extern int thread_create(uint64, uint64);
+extern int thread_join(int);
+extern void thread_exit(void);
+
+// thread functions here 
+uint64
+sys_thread_create(void)
+{
+  uint64 start_routine;
+  uint64 arg;
+
+  argaddr(0, &start_routine);
+  argaddr(1, &arg);
+
+  return thread_create(start_routine, arg);
+}
+
+uint64
+sys_thread_join(void)
+{
+  int tid;
+
+  argint(0, &tid);
+
+  return thread_join(tid);
+}
+
+uint64
+sys_thread_exit(void)
+{
+  thread_exit();
+  return 0; // never reached
+}
+
+
 uint64
 sys_getpid(void)
 {

@@ -259,6 +259,8 @@ UPROGS=\
 	$U/_download_test\
 	$U/_rdtime_test\
 	$U/_llm\
+	$U/_thread_test\
+	$U/_mutex_test\
 \
 
 # $U/_usertests\

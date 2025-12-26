@@ -1,3 +1,6 @@
+#ifndef XV6_USER_H   // <--- ADD THIS
+#define XV6_USER_H   // <--- ADD THIS
+
 #ifdef LAB_MMAP
 typedef unsigned long size_t;
 typedef long int off_t;
@@ -78,3 +81,30 @@ void qsort(void *base, uint nmemb, uint size,
            int (*compar)(const void *, const void *));
 float atof(const char *nptr);
 
+// Milestone 5: Threading
+int thread_create(void(*fcn)(void*), void *arg);
+int thread_join(int thread_id);
+void thread_exit(void);
+
+// Correct Atomic Mutex (User-space)
+typedef struct {
+  uint locked;       // Is the lock held?
+} mutex_t;
+
+static inline void mutex_init(mutex_t *m) {
+  m->locked = 0;
+}
+
+static inline void mutex_lock(mutex_t *m) {
+  // RISC-V Atomic Swap
+  while(__sync_lock_test_and_set(&m->locked, 1) != 0)
+    ;
+  __sync_synchronize(); // Memory barrier
+}
+
+static inline void mutex_unlock(mutex_t *m) {
+  __sync_synchronize(); // Memory barrier
+  __sync_lock_release(&m->locked); // Release lock
+}
+
+#endif // XV6_USER_H   <--- ADD THIS
