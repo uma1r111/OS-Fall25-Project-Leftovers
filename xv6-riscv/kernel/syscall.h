@@ -41,3 +41,6 @@
 #define SYS_thread_create 38
 #define SYS_thread_join   39
 #define SYS_thread_exit   40
+#define SYS_mutex_init    41
+#define SYS_mutex_lock    42
+#define SYS_mutex_unlock  43

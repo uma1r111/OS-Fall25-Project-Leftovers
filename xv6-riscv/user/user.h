@@ -1,14 +1,24 @@
-#ifndef XV6_USER_H   // <--- ADD THIS
-#define XV6_USER_H   // <--- ADD THIS
+#ifndef XV6_USER_H
+#define XV6_USER_H
 
-#ifdef LAB_MMAP
+// REMOVED: #include "kernel/types.h"
+// REMOVED: #include "kernel/stat.h"
+// REMOVED: #include "kernel/fcntl.h"
+// REASON: These cause redefinition errors because .c files include them before user.h
+
 typedef unsigned long size_t;
 typedef long int off_t;
-#endif
 
 #define SBRK_ERROR ((char *)-1)
+#ifndef SBRK_EAGER
+#define SBRK_EAGER 0
+#endif
+#ifndef SBRK_LAZY
+#define SBRK_LAZY  1
+#endif
 
 struct stat;
+struct rtcdate; // Added forward declaration just in case (standard xv6 has it)
 
 // system calls
 int fork(void);
@@ -35,6 +45,18 @@ int uptime(void);
 uint64 rdcycle(void);
 uint64 rdtime(void);
 uint64 rdinstret(void);
+
+// Threading system calls (Milestone additions)
+int thread_create(void (*start_routine)(void*), void *arg);
+int thread_join(int thread_id);
+void thread_exit(void);
+
+// Mutex (Assuming mutex_t is defined in types.h which is included by .c files)
+// If you get "unknown type name mutex_t" errors, ensure types.h has the definition.
+int mutex_init(mutex_t *mutex);
+void mutex_lock(mutex_t *mutex);
+void mutex_unlock(mutex_t *mutex);
+
 #ifdef LAB_NET
 int bind(uint16);
 int unbind(uint16);
@@ -73,38 +95,4 @@ void printf(const char*, ...) __attribute__ ((format (printf, 1, 2)));
 void* malloc(uint);
 void free(void*);
 
-// xv6_stdlib.c
-void* calloc(uint nmemb, uint size);
-void* bsearch(const void *key, const void *base, uint nmemb, uint size,
-              int (*compar)(const void *, const void *));
-void qsort(void *base, uint nmemb, uint size,
-           int (*compar)(const void *, const void *));
-float atof(const char *nptr);
-
-// Milestone 5: Threading
-int thread_create(void(*fcn)(void*), void *arg);
-int thread_join(int thread_id);
-void thread_exit(void);
-
-// Correct Atomic Mutex (User-space)
-typedef struct {
-  uint locked;       // Is the lock held?
-} mutex_t;
-
-static inline void mutex_init(mutex_t *m) {
-  m->locked = 0;
-}
-
-static inline void mutex_lock(mutex_t *m) {
-  // RISC-V Atomic Swap
-  while(__sync_lock_test_and_set(&m->locked, 1) != 0)
-    ;
-  __sync_synchronize(); // Memory barrier
-}
-
-static inline void mutex_unlock(mutex_t *m) {
-  __sync_synchronize(); // Memory barrier
-  __sync_lock_release(&m->locked); // Release lock
-}
-
-#endif // XV6_USER_H   <--- ADD THIS
+#endif /* XV6_USER_H */

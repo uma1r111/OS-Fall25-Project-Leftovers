@@ -160,3 +160,78 @@ uint64 sys_rdinstret(void) {
     asm volatile("csrr %0, instret" : "=r" (x));  
     return x;
 }
+
+// Initialize a mutex
+uint64
+sys_mutex_init(void)
+{
+  uint64 mutex_addr;
+  
+  argaddr(0, &mutex_addr);
+  
+  mutex_t m;
+  m.locked = 0;
+  m.owner_tid = -1;
+  
+  if(copyout(myproc()->pagetable, mutex_addr, 
+             (char*)&m, sizeof(m)) < 0)
+    return -1;
+  
+  return 0;
+}
+
+// Lock a mutex (spinlock version)
+uint64
+sys_mutex_lock(void)
+{
+  uint64 mutex_addr;
+  
+  argaddr(0, &mutex_addr);
+  
+  mutex_t m;
+  struct proc *p = myproc();
+  
+  for(;;){
+    // Read current value
+    if(copyin(p->pagetable, (char*)&m, mutex_addr, sizeof(m)) < 0)
+      return -1;
+    
+    if(m.locked == 0){
+      // Try to acquire
+      m.locked = 1;
+      m.owner_tid = p->thread_id;
+      
+      if(copyout(p->pagetable, mutex_addr, (char*)&m, sizeof(m)) < 0)
+        return -1;
+      
+      // Verify we got it (check again)
+      if(copyin(p->pagetable, (char*)&m, mutex_addr, sizeof(m)) < 0)
+        return -1;
+      
+      if(m.locked == 1 && m.owner_tid == p->thread_id){
+        return 0;  // Success
+      }
+    }
+    
+    // Busy wait (yield to other threads)
+    yield();
+  }
+}
+
+// Unlock a mutex
+uint64
+sys_mutex_unlock(void)
+{
+  uint64 mutex_addr;
+  
+  argaddr(0, &mutex_addr);
+  
+  mutex_t m;
+  m.locked = 0;
+  m.owner_tid = -1;
+  
+  if(copyout(myproc()->pagetable, mutex_addr, (char*)&m, sizeof(m)) < 0)
+    return -1;
+  
+  return 0;
+}

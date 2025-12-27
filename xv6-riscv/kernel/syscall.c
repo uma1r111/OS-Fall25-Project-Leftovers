@@ -110,6 +110,9 @@ extern uint64 sys_rdinstret(void);
 extern uint64 sys_thread_create(void);
 extern uint64 sys_thread_join(void);
 extern uint64 sys_thread_exit(void);
+extern uint64 sys_mutex_init(void);
+extern uint64 sys_mutex_lock(void);
+extern uint64 sys_mutex_unlock(void);
 
 #ifdef LAB_NET
 extern uint64 sys_bind(void);
@@ -152,6 +155,9 @@ static uint64 (*syscalls[])(void) = {
 [SYS_rdtime] sys_rdtime,
 [SYS_rdinstret] sys_rdinstret,
 [SYS_close]   sys_close,
+[SYS_mutex_init]    sys_mutex_init,
+[SYS_mutex_lock]    sys_mutex_lock,
+[SYS_mutex_unlock]  sys_mutex_unlock,
 #ifdef LAB_NET
 [SYS_bind] sys_bind,
 [SYS_unbind] sys_unbind,
@@ -182,3 +188,6 @@ syscall(void)
     p->trapframe->a0 = -1;
   }
 }
+
+
+

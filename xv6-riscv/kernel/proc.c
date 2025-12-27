@@ -20,7 +20,7 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-// helps ensure that wakeups of wait()ing
+// help ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
 // memory model when using p->parent.
 // must be acquired before any p->lock.
@@ -124,10 +124,11 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-
+ 
   p->parent_thread_stack_top = TRAMPOLINE - 2*PGSIZE;
   p->next_tid = 1; 
   initlock(&p->threadlock, "threadlock");
+
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -135,6 +136,8 @@ found:
     release(&p->lock);
     return 0;
   }
+
+   p->trapframe->sstatus |= SSTATUS_FS;
 
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
@@ -171,7 +174,6 @@ freeproc(struct proc *p)
     }
     p->pagetable = 0;
   }
-
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -347,6 +349,8 @@ thread_exit(void)
   sched();
   panic("thread_exit returned");
 }
+
+
 
 // Create a user page table for a given process, with no user memory,
 // but with trampoline and trapframe pages.
@@ -623,7 +627,6 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
-
         // If this proc shares a pagetable with other threads, ensure the
         // TRAPFRAME virtual page maps to this proc's trapframe so that
         // trampoline.S saves/restores user registers into the correct
@@ -634,7 +637,6 @@ scheduler(void)
         if(mappages(p->pagetable, TRAPFRAME, PGSIZE, (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
           panic("scheduler: mappages TRAPFRAME failed");
         }
-
         swtch(&c->context, &p->context);
 
         // Process is done running for now.

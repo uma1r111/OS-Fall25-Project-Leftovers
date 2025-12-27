@@ -54,3 +54,6 @@ entry("rdinstret");
 entry("thread_create");
 entry("thread_join");
 entry("thread_exit");
+entry("mutex_init");
+entry("mutex_lock");
+entry("mutex_unlock");
