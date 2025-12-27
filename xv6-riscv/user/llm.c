@@ -6,6 +6,7 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "user/xv6_maths.h"
+#include "user/xv6_stdlib.h"
 #include "user/udp_client.h"
 
 typedef unsigned long size_t;
@@ -20,6 +21,9 @@ typedef unsigned long size_t;
 #define cosf xv6_cosf
 #define sinf xv6_sinf
 #define fabsf xv6_fabsf
+
+// Threading configuration
+#define NUM_THREADS 3
 
 // ----------------------------------------------------------------------------
 // Helpers (Missing in xv6)
@@ -262,17 +266,145 @@ void softmax(float* x, int size) {
     prof.total_activation += (end - start);
 }
 
+// Structure for passing arguments to matmul worker threads
+struct matmul_args {
+    float* xout;      // output matrix pointer
+    float* x;         // input vector pointer
+    float* w;         // weight matrix pointer
+    int n;            // input dimension
+    int d;            // output dimension
+    int start_row;     // first row for this thread (inclusive)
+    int end_row;       // last row for this thread (exclusive)
+};
+
+// Worker function that each thread executes
+void matmul_worker(void* arg) {
+    if (arg == 0) {
+        thread_exit();
+        return;
+    }
+    
+    struct matmul_args* args = (struct matmul_args*)arg;
+    
+    // Safety checks
+    if (args->xout == 0 || args->x == 0 || args->w == 0) {
+        thread_exit();
+        return;
+    }
+    
+    if (args->start_row < 0 || args->end_row < args->start_row) {
+        thread_exit();
+        return;
+    }
+    
+    // Compute rows from start_row to end_row-1
+    for (int i = args->start_row; i < args->end_row && i < args->d; i++) {
+        float val = 0.0f;
+        for (int j = 0; j < args->n; j++) {
+            val += args->w[i * args->n + j] * args->x[j];
+        }
+        args->xout[i] = val;
+    }
+    
+    thread_exit();
+}
+
 void matmul(float* xout, float* x, float* w, int n, int d) {
     // W (d,n) @ x (n,) -> xout (d,)
-    // REMOVED OMP PARALLEL
+    // Parallelized using xv6 threading library
     unsigned long long start = rdcycle();
-    for (int i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
-        xout[i] = val;
+    
+    // Safety check: if dimensions are invalid or too small, use serial execution
+    if (xout == 0 || x == 0 || w == 0 || n <= 0 || d <= 0) {
+        unsigned long long end = rdcycle();
+        prof.total_matmul += (end - start);
+        return;
     }
+    
+    // For single thread or very small matrices, use serial execution to avoid threading overhead
+    if (NUM_THREADS <= 1 || d < NUM_THREADS) {
+        for (int i = 0; i < d; i++) {
+            float val = 0.0f;
+            for (int j = 0; j < n; j++) {
+                val += w[i * n + j] * x[j];
+            }
+            xout[i] = val;
+        }
+        unsigned long long end = rdcycle();
+        prof.total_matmul += (end - start);
+        return;
+    }
+    
+    // Stack-allocate argument structures for each thread
+    // IMPORTANT: These must remain valid until all threads complete
+    struct matmul_args args[NUM_THREADS];
+    int thread_ids[NUM_THREADS];
+    
+    // Initialize all thread_ids to -1 (invalid) first
+    for (int i = 0; i < NUM_THREADS; i++) {
+        thread_ids[i] = -1;
+    }
+    
+    // Calculate row ranges for each thread
+    int rows_per_thread = d / NUM_THREADS;
+    int remainder = d % NUM_THREADS;
+    
+    // Initialize argument structures FIRST (before creating threads)
+    // This ensures args are fully set up before threads access them
+    int current_row = 0;
+    for (int i = 0; i < NUM_THREADS; i++) {
+        // Calculate row range for this thread
+        int start_row = current_row;
+        int end_row = current_row + rows_per_thread;
+        
+        // Give remainder rows to the last thread
+        if (i == NUM_THREADS - 1) {
+            end_row += remainder;
+        }
+        
+        // Set up arguments for this thread - do this BEFORE creating thread
+        args[i].xout = xout;
+        args[i].x = x;
+        args[i].w = w;
+        args[i].n = n;
+        args[i].d = d;
+        args[i].start_row = start_row;
+        args[i].end_row = end_row;
+        
+        current_row = end_row;
+    }
+    
+    // Now create all threads AFTER args are fully initialized
+    // Use a small delay between thread creations to avoid stack allocation issues
+    for (int i = 0; i < NUM_THREADS; i++) {
+        // Create thread - check for errors
+        int tid = thread_create(matmul_worker, &args[i]);
+        if (tid < 0) {
+            // Thread creation failed - fall back to serial execution for this range
+            for (int row = args[i].start_row; row < args[i].end_row; row++) {
+                float val = 0.0f;
+                for (int j = 0; j < n; j++) {
+                    val += w[row * n + j] * x[j];
+                }
+                xout[row] = val;
+            }
+            // Keep thread_ids[i] = -1 to mark as failed
+        } else {
+            thread_ids[i] = tid;
+            // Small pause to allow thread to start and allocate its stack
+            // This helps avoid stack allocation conflicts
+            pause(1);
+        }
+    }
+    
+    // Wait for all threads to complete
+    // IMPORTANT: args[] must remain on stack until all joins complete
+    for (int i = 0; i < NUM_THREADS; i++) {
+        if (thread_ids[i] >= 0) {
+            thread_join(thread_ids[i]);
+        }
+    }
+    
     unsigned long long end = rdcycle();
     prof.total_matmul += (end - start);
 }
@@ -864,6 +996,8 @@ void print_benchmark_results(void) {
 // ----------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
+    printf("no of threads: %d\n", NUM_THREADS);
+
     // defaults
     float temperature = 0.0f;   // 0.0 for reproducibility
     float topp = 0.9f;          

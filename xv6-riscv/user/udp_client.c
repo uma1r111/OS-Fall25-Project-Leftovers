@@ -57,9 +57,15 @@ char* fetch_file(char *filename, int *size_out) {
     memmove(req_buf + HEADER_SIZE, filename, strlen(filename));
 
     // Send Request
-    send(sock_port, DST_IP, SERVER_PORT, (char*)req_buf, HEADER_SIZE + strlen(filename));
+    printf("Sending metadata request for: %s\n", filename);
+    int send_result = send(sock_port, DST_IP, SERVER_PORT, (char*)req_buf, HEADER_SIZE + strlen(filename));
+    if (send_result < 0) {
+        printf("Error: send failed\n");
+        return 0;
+    }
+    printf("Request sent, waiting for response...\n");
 
-    // Receive Metadata Response
+    // Receive Metadata Response with retry mechanism
     uchar res_buf[BLOCK_SIZE + 20];
     
     // --- FIX START: Use correct types for pointers ---
@@ -67,10 +73,37 @@ char* fetch_file(char *filename, int *size_out) {
     uint16 src_port;  // Changed from short to uint16
     // -------------------------------------------------
 
-    // recv expects pointers to unsigned types
-    int n = recv(sock_port, &src_ip, &src_port, (char*)res_buf, BLOCK_SIZE);
+    // Try receiving with multiple attempts (in case of packet loss)
+    int n = -1;
+    int attempts = 0;
+    int max_attempts = 10;
     
-    if (n < 0) { printf("Error: recv meta failed\n"); return 0; }
+    while (n < 0 && attempts < max_attempts) {
+        // Send request again if this is a retry
+        if (attempts > 0) {
+            printf("Retrying request (attempt %d/%d)...\n", attempts + 1, max_attempts);
+            send_result = send(sock_port, DST_IP, SERVER_PORT, (char*)req_buf, HEADER_SIZE + strlen(filename));
+            if (send_result < 0) {
+                printf("Error: retry send failed\n");
+                return 0;
+            }
+        }
+        
+        // recv expects pointers to unsigned types
+        n = recv(sock_port, &src_ip, &src_port, (char*)res_buf, BLOCK_SIZE);
+        
+        if (n < 0) {
+            attempts++;
+            // Small delay before retry (xv6 doesn't have usleep, but we can use pause)
+            pause(100); // Pause for a short time
+        }
+    }
+    
+    printf("Received %d bytes after %d attempts\n", n, attempts + 1);
+    if (n < 0) { 
+        printf("Error: recv meta failed after %d attempts\n", max_attempts); 
+        return 0; 
+    }
 
     // Parse Metadata
     uchar type;
