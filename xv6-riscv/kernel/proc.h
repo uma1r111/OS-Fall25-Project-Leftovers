@@ -133,7 +133,8 @@ struct proc {
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
-  int is_thread;              // 1 if this is a thread, 0 if process
+  int is_thread;   
+  uint64 tf_va;           // 1 if this is a thread, 0 if process
   struct proc *parent_proc;   // Main process if this is a thread
   int thread_id;              // Unique thread ID within process
   void *thread_stack;         // User stack (physical memory)

@@ -124,9 +124,10 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
-  p->parent_thread_stack_top = TRAMPOLINE - 2*PGSIZE;
-  p->next_tid = 1; 
-  initlock(&p->threadlock, "threadlock");
+
+  // MULTITHREADING INIT:
+  p->is_thread = 0;           // Default: not a thread
+  p->tf_va = TRAPFRAME;       // Default: trapframe at standard location
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -151,7 +152,6 @@ found:
 
   return p;
 }
-
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
@@ -160,12 +160,13 @@ freeproc(struct proc *p)
 {
   if(p->trapframe)
     kfree((void*)p->trapframe);
-  if(p->pagetable){
-    if(!p->is_thread){
-      proc_freepagetable(p->pagetable, p->sz);
-    }
-    p->pagetable = 0;
-  }
+  p->trapframe = 0;
+  
+  // Only free pagetable if NOT a thread
+  if(p->pagetable && !p->is_thread)
+    proc_freepagetable(p->pagetable, p->sz);
+    
+  p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -173,79 +174,87 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  
+  // Clean up threading fields
+  p->is_thread = 0;
+  p->tf_va = 0;     // Ensure we don't use stale values
+  
   p->state = UNUSED;
 }
-
 int
-thread_create(uint64 start_routine, uint64 arg)
-{ 
-    struct proc *p = myproc();
-    if(p->is_thread){
-      return -1;
-    }
-    
-    struct proc *np;
+thread_create(uint64 start_func, uint64 arg)
+{
+  struct proc *np;
+  struct proc *p = myproc();
+  uint64 sp;
 
-    // Allocate new thread (allocproc acquires np->lock)
-    if ((np = allocproc()) == 0)
-        return -1;
+  if((np = allocproc()) == 0){
+    return -1;
+  }
 
-    // Mark as thread
-    np->is_thread = 1;
-    np->parent_proc = p;
+  // 1. Share the Page Table
+  // Free the empty pagetable allocproc created (we won't use it)
+  proc_freepagetable(np->pagetable, 0); 
+  np->pagetable = p->pagetable; // Share parent's
+  np->sz = p->sz;
+  np->is_thread = 1;
 
-    // Allocate a unique thread ID
-    if (!p->next_tid) p->next_tid = 1;  // initialize if not done
-    np->thread_id = p->next_tid++;
-
-    // Share address space
-    np->pagetable = p->pagetable;
-    np->sz = p->sz;
-
-    // Allocate user stack
-    np->thread_stack_size = PGSIZE;
-    if ((np->thread_stack = kalloc()) == 0) {
-        freeproc(np);
-        return -1;
-    }
-
-    // Pick a stack virtual address safely above parent memory
-   
-    uint64 stack_va = p->parent_thread_stack_top - np->thread_id * PGSIZE;
-
-    // Map the physical page
-    if(mappages(np->pagetable, stack_va, PGSIZE, 
-        (uint64)np->thread_stack, 
-        PTE_R | PTE_W | PTE_U) < 0){
-          kfree(np->thread_stack);
-          freeproc(np);
-          return -1;
-    }
-
-    // Update safe top for next thread
-    np->thread_stack_top = stack_va;
-
-    // Copy parent trapframe and set up thread entry
-    *(np->trapframe) = *(p->trapframe);
-    np->trapframe->epc = start_routine;        // thread start
-    np->trapframe->sp  = stack_va + PGSIZE;    // top of stack
-    np->trapframe->a0  = arg;                  // argument
-
-    // Inherit open files
-    for (int i = 0; i < NOFILE; i++)
-        if (p->ofile[i])
-            np->ofile[i] = filedup(p->ofile[i]);
-    np->cwd = idup(p->cwd);
-
-    safestrcpy(np->name, p->name, sizeof(np->name));
-
-    // Make thread runnable
-    np->state = RUNNABLE;
+  // 2. Allocate Stack (1 page at top of heap)
+  uint64 sz = p->sz;
+  uint64 newsz = PGROUNDUP(sz) + PGSIZE;
+  
+  // We must grow the shared page table
+  if(uvmalloc(np->pagetable, PGROUNDUP(sz), newsz, PTE_W) == 0){
+    np->is_thread = 0; // Prevent freeproc from double-freeing shared PT
+    freeproc(np);
     release(&np->lock);
+    return -1;
+  }
+  
+  // Update sz for all threads sharing this pagetable
+  struct proc *pp;
+  for(pp = proc; pp < &proc[NPROC]; pp++){
+    if(pp->pagetable == p->pagetable) pp->sz = newsz;
+  }
+  sp = newsz;
 
-    return np->thread_id;
+  // 3. Map the NEW Trapframe to a UNIQUE Virtual Address
+  // Use a unique location based on PID to avoid overlap
+  np->tf_va = TRAMPOLINE - (np->pid + 1) * PGSIZE;
+  
+  if(mappages(np->pagetable, np->tf_va, PGSIZE, 
+              (uint64)np->trapframe, PTE_R | PTE_W) < 0){
+    np->is_thread = 0;
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
+  // 4. Setup Context
+  *(np->trapframe) = *(p->trapframe);
+  np->trapframe->sp = sp;             
+  np->trapframe->epc = start_func;    
+  np->trapframe->a0 = arg;            
+  np->trapframe->ra = 0xffffffff;     
+
+  // 5. File Descriptors
+  for(int i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = idup(p->cwd);
+
+  safestrcpy(np->name, p->name, sizeof(p->name));
+  int tid = np->pid;
+  
+  release(&np->lock);
+  acquire(&wait_lock);
+  np->parent = p;
+  release(&wait_lock);
+  acquire(&np->lock);
+  np->state = RUNNABLE;
+  release(&np->lock);
+  return tid;
 }
-
 
 
 // Join a thread

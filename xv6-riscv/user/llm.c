@@ -1,4 +1,4 @@
-/* Inference for Llama-2 Transformer model in pure C - Adapted for xv6 */
+/* Inference for Llama-2 Transformer model in pure C - Adapted for xv6 with Multithreading */
 
 // ----------------------------------------------------------------------------
 // XV6 Headers & Macros
@@ -12,6 +12,7 @@ typedef unsigned long size_t;
 
 #define EXIT_FAILURE 1
 #define stderr 2
+#define NUM_THREADS 4
 
 // Math mappings
 #define sqrtf xv6_sqrtf
@@ -22,14 +23,9 @@ typedef unsigned long size_t;
 #define fabsf xv6_fabsf
 
 // ----------------------------------------------------------------------------
-// Helpers (Missing in xv6)
+// Helpers
 // ----------------------------------------------------------------------------
 
-#include "kernel/types.h"
-#include "user/user.h" 
-// ... other headers ...
-
-// Define the structure to hold metrics
 struct ProfilingData {
     unsigned long long start_time;
     unsigned long long ttft_end;     // Time to First Token
@@ -67,55 +63,46 @@ typedef struct {
     int hidden_dim; // for ffn layers
     int n_layers; // number of layers
     int n_heads; // number of query heads
-    int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
-    int vocab_size; // vocabulary size, usually 256 (byte-level)
+    int n_kv_heads; // number of key/value heads 
+    int vocab_size; // vocabulary size
     int seq_len; // max sequence length
 } Config;
 
 typedef struct {
-    // token embedding table
-    float* token_embedding_table;    // (vocab_size, dim)
-    // weights for rmsnorms
-    float* rms_att_weight; // (layer, dim) rmsnorm weights
-    float* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    float* wq; // (layer, dim, n_heads * head_size)
-    float* wk; // (layer, dim, n_kv_heads * head_size)
-    float* wv; // (layer, dim, n_kv_heads * head_size)
-    float* wo; // (layer, n_heads * head_size, dim)
-    // weights for ffn
-    float* w1; // (layer, hidden_dim, dim)
-    float* w2; // (layer, dim, hidden_dim)
-    float* w3; // (layer, hidden_dim, dim)
-    // final rmsnorm
-    float* rms_final_weight; // (dim,)
-    // (optional) classifier weights for the logits, on the last layer
+    float* token_embedding_table;
+    float* rms_att_weight; 
+    float* rms_ffn_weight; 
+    float* wq; 
+    float* wk; 
+    float* wv; 
+    float* wo; 
+    float* w1; 
+    float* w2; 
+    float* w3; 
+    float* rms_final_weight; 
     float* wcls;
 } TransformerWeights;
 
 typedef struct {
-    // current wave of activations
-    float *x; // activation at current time stamp (dim,)
-    float *xb; // same, but inside a residual branch (dim,)
-    float *xb2; // an additional buffer just for convenience (dim,)
-    float *hb; // buffer for hidden dimension in the ffn (hidden_dim,)
-    float *hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
-    float *q; // query (dim,)
-    float *k; // key (dim,)
-    float *v; // value (dim,)
-    float *att; // buffer for scores/attention values (n_heads, seq_len)
-    float *logits; // output logits
-    // kv cache
-    float* key_cache;   // (layer, seq_len, dim)
-    float* value_cache; // (layer, seq_len, dim)
+    float *x; 
+    float *xb; 
+    float *xb2; 
+    float *hb; 
+    float *hb2; 
+    float *q; 
+    float *k; 
+    float *v; 
+    float *att; 
+    float *logits; 
+    float* key_cache;   
+    float* value_cache; 
 } RunState;
 
 typedef struct {
-    Config config; // the hyperparameters of the architecture (the blueprint)
-    TransformerWeights weights; // the weights of the model
-    RunState state; // buffers for the "wave" of activations in the forward pass
-    // Removed fd and file_size, we use raw buffers now
-    float* data; // pointer to the raw weight buffer
+    Config config; 
+    TransformerWeights weights; 
+    RunState state; 
+    float* data; 
 } Transformer;
 
 void malloc_run_state(RunState* s, Config* p) {
@@ -130,7 +117,6 @@ void malloc_run_state(RunState* s, Config* p) {
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
-    // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
      || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
         fprintf(stderr, "malloc failed!\n");
@@ -181,10 +167,8 @@ void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared
     w->wcls = shared_weights ? w->token_embedding_table : ptr;
 }
 
-// MODIFIED: Fetches weights over network instead of mmap/fopen
 void read_checkpoint(Config* config, TransformerWeights* weights, float** data_ptr) {
     int total_size = 0;
-    
     printf("Fetching model weights via UDP...\n");
     char* raw_buffer = fetch_model_weights(&total_size);
     if (raw_buffer == 0) {
@@ -193,38 +177,244 @@ void read_checkpoint(Config* config, TransformerWeights* weights, float** data_p
     }
     printf("Model downloaded: %d bytes\n", total_size);
 
-    // 1. Read config from the start of the buffer
-    // raw_buffer is char*, we cast to Config* to read header
     Config* fetched_config = (Config*)raw_buffer;
-    *config = *fetched_config; // Copy struct
-
+    *config = *fetched_config; 
     int shared_weights = config->vocab_size > 0 ? 1 : 0;
     config->vocab_size = abs(config->vocab_size);
-
-    // 2. Weights start immediately after the Config struct
-    // We cast the pointer logic to float*
     *data_ptr = (float*)(raw_buffer + sizeof(Config));
-
-    // 3. Map pointers
     memory_map_weights(weights, config, *data_ptr, shared_weights);
 }
 
 void build_transformer(Transformer *t) {
-    // read in the Config and the Weights from the checkpoint
     read_checkpoint(&t->config, &t->weights, &t->data);
-    // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
 }
 
 void free_transformer(Transformer* t) {
-    // We cannot easily 'unmap' or free the big buffer if it was alloc'd inside fetch_model_weights
-    // If fetch_model_weights used malloc, we should free the base pointer (t->data - sizeof(Config))
-    // For now, in xv6 user programs, OS cleans up on exit.
     free_run_state(&t->state);
 }
 
 // ----------------------------------------------------------------------------
-// neural net blocks; the dynamics of the Transformer
+// Thread Workers and Parallel Functions
+// ----------------------------------------------------------------------------
+
+// --- Parallel Matmul ---
+
+typedef struct {
+    float* output;
+    float* input;
+    float* weight;
+    int n;
+    int d;
+    int row_start;
+    int row_end;
+} MatmulArgs;
+
+void matmul_worker(void *arg) {
+    MatmulArgs* args = (MatmulArgs*)arg;
+    for (int i = args->row_start; i < args->row_end; i++) {
+        float val = 0.0f;
+        for (int j = 0; j < args->n; j++) {
+            val += args->weight[i * args->n + j] * args->input[j];
+        }
+        args->output[i] = val;
+    }
+    thread_exit();
+}
+
+void matmul_parallel(float* output, float* input, float* weight, int n, int d) {
+    // For small matrices or odd sizes, run serial to avoid overhead
+    if (d < NUM_THREADS * 4) {
+        for (int i = 0; i < d; i++) {
+            float val = 0.0f;
+            for (int j = 0; j < n; j++) {
+                val += weight[i * n + j] * input[j];
+            }
+            output[i] = val;
+        }
+        return;
+    }
+
+    int thread_ids[NUM_THREADS];
+    MatmulArgs args[NUM_THREADS];
+
+    int rows_per_thread = d / NUM_THREADS;
+    int extra_rows = d % NUM_THREADS;
+    int current_row = 0;
+
+    for (int t = 0; t < NUM_THREADS; t++) {
+        int rows_for_this_thread = rows_per_thread + (t < extra_rows ? 1 : 0);
+        
+        args[t].output = output;
+        args[t].input = input;
+        args[t].weight = weight;
+        args[t].n = n;
+        args[t].d = d;
+        args[t].row_start = current_row;
+        args[t].row_end = current_row + rows_for_this_thread;
+
+        thread_ids[t] = thread_create(matmul_worker, (void*)&args[t]);
+        if (thread_ids[t] < 0) {
+            // Fallback if thread creation fails
+            fprintf(stderr, "Thread creation failed, running part serial\n");
+            for (int i = current_row; i < d; i++) {
+                 float val = 0.0f;
+                 for (int j = 0; j < n; j++) val += weight[i * n + j] * input[j];
+                 output[i] = val;
+            }
+            return;
+        }
+        current_row += rows_for_this_thread;
+    }
+
+    for (int t = 0; t < NUM_THREADS; t++) {
+        if (thread_ids[t] >= 0) {
+            thread_join(thread_ids[t]);
+        }
+    }
+}
+
+// Wrapper to replace original serial matmul
+void matmul(float* xout, float* x, float* w, int n, int d) {
+    unsigned long long start = rdcycle();
+    matmul_parallel(xout, x, w, n, d);
+    unsigned long long end = rdcycle();
+    prof.total_matmul += (end - start);
+}
+
+// --- Parallel Attention ---
+
+typedef struct {
+    float* att;
+    float* q;
+    float* key_cache;
+    float* xb;
+    float* value_cache;
+    int seq_len;
+    int head_size;
+    int pos;
+    int loff;
+    int dim;
+    int kv_dim;
+    int kv_mul;
+    int head_start;
+    int head_end;
+} AttentionArgs;
+
+// Helper function that contains the core logic (doesn't exit)
+void run_attention_range(AttentionArgs* args) {
+    int head_size = args->head_size;
+    
+    for (int h = args->head_start; h < args->head_end; h++) {
+        float* q = args->q + h * head_size;
+        float* att = args->att + h * args->seq_len;
+        
+        // Calculate attention scores
+        for (int t = 0; t <= args->pos; t++) {
+            // Handle GQA: (h / kv_mul) maps query head to kv head
+            int kv_head = h / args->kv_mul;
+            float* k = args->key_cache + args->loff + t * args->kv_dim + kv_head * head_size;
+            float score = 0.0f;
+            for (int i = 0; i < head_size; i++) {
+                score += q[i] * k[i];
+            }
+            score /= sqrtf(head_size);
+            att[t] = score;
+        }
+        
+        // Softmax
+        float max_val = att[0];
+        for (int t = 1; t <= args->pos; t++) {
+            if (att[t] > max_val) max_val = att[t];
+        }
+        
+        float sum = 0.0f;
+        for (int t = 0; t <= args->pos; t++) {
+            att[t] = expf(att[t] - max_val);
+            sum += att[t];
+        }
+        
+        for (int t = 0; t <= args->pos; t++) {
+            att[t] /= sum;
+        }
+        
+        // Weighted sum of values
+        float* xb = args->xb + h * head_size;
+        memset(xb, 0, head_size * sizeof(float));
+        for (int t = 0; t <= args->pos; t++) {
+            int kv_head = h / args->kv_mul;
+            float* v = args->value_cache + args->loff + t * args->kv_dim + kv_head * head_size;
+            float a = att[t];
+            for (int i = 0; i < head_size; i++) {
+                xb[i] += a * v[i];
+            }
+        }
+    }
+}
+
+void attention_worker(void *arg) {
+    run_attention_range((AttentionArgs*)arg);
+    thread_exit();
+}
+
+void attention_parallel_run(RunState* s, int n_heads, int head_size, 
+                        int seq_len, int pos, int loff, int dim, int kv_dim, int kv_mul) {
+    if (n_heads < NUM_THREADS) {
+        // Serial fallback: Run directly in this thread
+        AttentionArgs args;
+        args.att = s->att; args.q = s->q; args.key_cache = s->key_cache;
+        args.xb = s->xb; args.value_cache = s->value_cache;
+        args.seq_len = seq_len; args.head_size = head_size; args.pos = pos;
+        args.loff = loff; args.dim = dim; args.kv_dim = kv_dim; args.kv_mul = kv_mul;
+        args.head_start = 0; args.head_end = n_heads;
+        
+        run_attention_range(&args);
+        return;
+    }
+    
+    int thread_ids[NUM_THREADS];
+    AttentionArgs args[NUM_THREADS];
+    
+    int heads_per_thread = n_heads / NUM_THREADS;
+    int extra_heads = n_heads % NUM_THREADS;
+    int current_head = 0;
+    
+    for (int t = 0; t < NUM_THREADS; t++) {
+        int heads_for_this_thread = heads_per_thread + (t < extra_heads ? 1 : 0);
+        
+        args[t].att = s->att;
+        args[t].q = s->q;
+        args[t].key_cache = s->key_cache;
+        args[t].xb = s->xb;
+        args[t].value_cache = s->value_cache;
+        args[t].seq_len = seq_len;
+        args[t].head_size = head_size;
+        args[t].pos = pos;
+        args[t].loff = loff;
+        args[t].dim = dim;
+        args[t].kv_dim = kv_dim;
+        args[t].kv_mul = kv_mul;
+        args[t].head_start = current_head;
+        args[t].head_end = current_head + heads_for_this_thread;
+        
+        if (heads_for_this_thread > 0) {
+            thread_ids[t] = thread_create(attention_worker, (void*)&args[t]);
+        } else {
+            thread_ids[t] = -1;
+        }
+        current_head += heads_for_this_thread;
+    }
+    
+    for (int t = 0; t < NUM_THREADS; t++) {
+        if (thread_ids[t] >= 0) {
+            thread_join(thread_ids[t]);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Neural net blocks
+// ----------------------------------------------------------------------------
 
 void rmsnorm(float* o, float* x, float* weight, int size) {
     unsigned long long start = rdcycle();
@@ -262,21 +452,6 @@ void softmax(float* x, int size) {
     prof.total_activation += (end - start);
 }
 
-void matmul(float* xout, float* x, float* w, int n, int d) {
-    // W (d,n) @ x (n,) -> xout (d,)
-    // REMOVED OMP PARALLEL
-    unsigned long long start = rdcycle();
-    for (int i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
-        xout[i] = val;
-    }
-    unsigned long long end = rdcycle();
-    prof.total_matmul += (end - start);
-}
-
 float* forward(Transformer* transformer, int token, int pos) {
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
@@ -301,10 +476,12 @@ float* forward(Transformer* transformer, int token, int pos) {
         s->k = s->key_cache + loff + pos * kv_dim;
         s->v = s->value_cache + loff + pos * kv_dim;
 
+        // QKV Matmuls - these are now PARALLEL via the matmul() wrapper
         matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
         matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
         matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
 
+        // RoPE (Sequential - lightweight)
         for (int i = 0; i < dim; i+=2) {
             int head_dim = i % head_size;
             float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
@@ -321,33 +498,11 @@ float* forward(Transformer* transformer, int token, int pos) {
             }
         }
 
-        // REMOVED OMP PARALLEL
-        for (int h = 0; h < p->n_heads; h++) {
-            float* q = s->q + h * head_size;
-            float* att = s->att + h * p->seq_len;
-            for (int t = 0; t <= pos; t++) {
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
-                score /= sqrtf(head_size);
-                att[t] = score;
-            }
+        // Multi-Head Attention - PARALLELIZED
+        // Replaces the sequential for loop over heads
+        attention_parallel_run(s, p->n_heads, head_size, p->seq_len, pos, loff, dim, kv_dim, kv_mul);
 
-            softmax(att, pos + 1);
-
-            float* xb = s->xb + h * head_size;
-            memset(xb, 0, head_size * sizeof(float));
-            for (int t = 0; t <= pos; t++) {
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                float a = att[t];
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
-            }
-        }
-
+        // Output projection - PARALLEL via matmul()
         matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
 
         for (int i = 0; i < dim; i++) {
@@ -357,15 +512,15 @@ float* forward(Transformer* transformer, int token, int pos) {
         unsigned long long att_end = rdcycle();
         prof.total_attention += (att_end - att_start);
 
-        // Feed-Forward Network (FFN) Section
+        // FFN Section
         unsigned long long ffn_start = rdcycle();
         
         rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
 
+        // FFN Matmuls - PARALLEL via matmul()
         matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
         matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
 
-        // SwiGLU Activation - instrument separately for activation timing
         unsigned long long swiglu_start = rdcycle();
         for (int i = 0; i < hidden_dim; i++) {
             float val = s->hb[i];
@@ -376,6 +531,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         unsigned long long swiglu_end = rdcycle();
         prof.total_activation += (swiglu_end - swiglu_start);
 
+        // FFN Output Matmul - PARALLEL via matmul()
         matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
 
         for (int i = 0; i < dim; i++) {
@@ -413,7 +569,6 @@ int compare_tokens(const void *a, const void *b) {
     return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
 }
 
-// MODIFIED: Fetches tokenizer over network
 void build_tokenizer(Tokenizer* t, int vocab_size) {
     t->vocab_size = vocab_size;
     t->vocab = (char**)malloc(vocab_size * sizeof(char*));
@@ -430,31 +585,21 @@ void build_tokenizer(Tokenizer* t, int vocab_size) {
     char* buf = fetch_tokenizer(&size);
     if (!buf) { fprintf(stderr, "couldn't fetch tokenizer\n"); exit(EXIT_FAILURE); }
     
-    // Manual deserialization from buffer
     char* ptr = buf;
-
-    // Read max_token_length (int)
     memcpy(&t->max_token_length, ptr, sizeof(int));
     ptr += sizeof(int);
 
     int len;
     for (int i = 0; i < vocab_size; i++) {
-        // Read score (float)
         memcpy(t->vocab_scores + i, ptr, sizeof(float));
         ptr += sizeof(float);
-
-        // Read len (int)
         memcpy(&len, ptr, sizeof(int));
         ptr += sizeof(int);
-
-        // Read string
         t->vocab[i] = (char *)malloc(len + 1);
         memcpy(t->vocab[i], ptr, len);
         t->vocab[i][len] = '\0';
         ptr += len;
     }
-    
-    // We should free the network buffer if possible, assuming malloc was used in udp_client
     free(buf);
 }
 
@@ -468,13 +613,9 @@ void free_tokenizer(Tokenizer* t) {
 char* decode(Tokenizer* t, int prev_token, int token) {
     char *piece = t->vocab[token];
     if (prev_token == 1 && piece[0] == ' ') { piece++; }
-    
     unsigned char byte_val;
-    // xv6 does not have sscanf. Manual parsing for <0xXX>
     if (piece[0] == '<' && piece[1] == '0' && piece[2] == 'x' && 
         piece[5] == '>' && piece[6] == '\0') {
-        
-        // simple hex conversion for 2 chars
         char c1 = piece[3];
         char c2 = piece[4];
         int v1 = (c1 >= '0' && c1 <= '9') ? c1 - '0' : (c1 >= 'A' && c1 <= 'F') ? c1 - 'A' + 10 : c1 - 'a' + 10;
@@ -482,7 +623,6 @@ char* decode(Tokenizer* t, int prev_token, int token) {
         byte_val = (v1 << 4) | v2;
         piece = (char*)t->byte_pieces + byte_val * 2;
     }
-    
     return piece;
 }
 
@@ -559,17 +699,6 @@ void encode(Tokenizer* t, char *text, int bos, int eos, int *tokens, int *n_toke
         int best_idx = -1;
 
         for (int i=0; i < (*n_tokens-1); i++) {
-            // Replaced sprintf with manual construction or assumption
-            // xv6 doesn't have snprintf/sprintf in user.h usually, only printf/fprintf
-            // For this milestone, we might skip the BPE merge loop if we lack tools, 
-            // BUT since this is critical, we assume user added string functions or we implement minimal copy
-            // Let's rely on basic strcpy/strcat if available or simple pointer manipulation
-            
-            // NOTE: Since xv6 user lib is minimal, we assume standard sprintf isn't available to string buffer
-            // To be safe for this specific "run.c" port, we will skip the BPE merge loop 
-            // if we cannot concat easily. However, `user.h` has no sprintf.
-            // Let's implement a minimal concat manually for the buffer.
-            
             char *s1 = t->vocab[tokens[i]];
             char *s2 = t->vocab[tokens[i+1]];
             strcpy(str_buffer, s1);
@@ -723,11 +852,6 @@ int sample(Sampler* sampler, float* logits) {
     return next;
 }
 
-// ----------------------------------------------------------------------------
-// Utilities
-// ----------------------------------------------------------------------------
-
-// MODIFIED: Returns CPU cycles for timing
 unsigned long long get_time() {
     return rdcycle();
 }
@@ -740,7 +864,6 @@ int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, c
     char *empty_prompt = "";
     if (prompt == 0) { prompt = empty_prompt; }
 
-    // Initialize profiling
     prof.start_time = rdcycle();
     prof.first_token_flag = 0;
     prof.total_tokens_generated = 0;
@@ -759,7 +882,6 @@ int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, c
         exit(EXIT_FAILURE);
     }
     
-    // Store prompt tokens count for profiling
     prof.prompt_tokens = num_prompt_tokens;
 
     unsigned long long start = 0;  
@@ -774,7 +896,6 @@ int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, c
             next = prompt_tokens[pos + 1];
         } else {
             next = sample(sampler, logits);
-            // Time to First Token (TTFT) - when we generate the first token after prompt
             if (prof.first_token_flag == 0) {
                 prof.ttft_end = rdcycle();
                 prof.first_token_flag = 1;
@@ -786,7 +907,6 @@ int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, c
 
         char* piece = decode(tokenizer, token, next);
         safe_printf(piece); 
-        // fflush not needed/available in basic xv6, prints are usually buffered but handled by kernel console
         
         token = next;
 
@@ -794,38 +914,27 @@ int generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, c
     }
     printf("\n");
 
-    // End of End-to-End Latency
     prof.end_time = rdcycle();
     
-    // Store total tokens generated (excluding prompt tokens)
     int tokens_generated = pos - num_prompt_tokens;
     prof.total_tokens_generated = tokens_generated;
 
     if (pos > 1) {
         unsigned long long end = get_time();
-        // Printing raw cycles and an estimated tok/s assuming hypothetical MHz if needed, 
-        // or just the cycle count delta as per instructions.
         unsigned long long cycles = end - start;
         printf("Tokens generated: %d\n", tokens_generated);
         printf("Total Cycles: %ld\n", (long)cycles);
-        // Assuming 10MHz for QEMU default (very rough approx), 
-        // printf("Approx Tok/s: %f\n", (double)(tokens_generated) / ((double)cycles / 10000000.0));
     }
 
     free(prompt_tokens);
     return tokens_generated;
 }
+
 void print_benchmark_results(void) {
     unsigned long long total_cycles = prof.end_time - prof.start_time;
     unsigned long long ttft_cycles = prof.ttft_end - prof.start_time;
-    
-    // TPS Calculation: generation_time is (end_time - ttft_end)
     unsigned long long gen_cycles = prof.end_time - prof.ttft_end;
-    
-    // Calculate Percentages
-    // Note: Use simple integer math or basic float casting if supported
     unsigned long long inference_sum = prof.total_matmul + prof.total_attention + prof.total_ffn + prof.total_sampling;
-    // If inference_sum is 0, avoid crash
     if(inference_sum == 0) inference_sum = 1;
 
     printf("\n=== BENCHMARK RESULTS ===\n");
@@ -836,7 +945,6 @@ void print_benchmark_results(void) {
     printf("TTFT: %ld cycles\n", (long)ttft_cycles);
     printf("End-to-End: %ld cycles\n", (long)total_cycles);
     
-    // Print TPS as cycles per token (avoid division by zero)
     if (prof.total_tokens_generated > 0 && gen_cycles > 0) {
         unsigned long long cycles_per_token = gen_cycles / prof.total_tokens_generated;
         printf("TPS (cycles/tok): %ld\n", (long)cycles_per_token);
@@ -850,46 +958,29 @@ void print_benchmark_results(void) {
     printf("Attention: %ld%%\n", (long)((prof.total_attention * 100) / inference_sum));
     printf("FFN: %ld%%\n", (long)((prof.total_ffn * 100) / inference_sum));
     printf("Sampling: %ld%%\n", (long)((prof.total_sampling * 100) / inference_sum));
-    
-    printf("\nRAW CYCLE COUNTS:\n");
-    printf("Total matmul: %ld cycles\n", (long)prof.total_matmul);
-    printf("Total activations: %ld cycles\n", (long)prof.total_activation);
-    printf("Total attention: %ld cycles\n", (long)prof.total_attention);
-    printf("Total FFN: %ld cycles\n", (long)prof.total_ffn);
-    printf("Total sampling: %ld cycles\n", (long)prof.total_sampling);
 }
 
-// ----------------------------------------------------------------------------
-// Main
-// ----------------------------------------------------------------------------
-
 int main(int argc, char *argv[]) {
-    // defaults
-    float temperature = 0.0f;   // 0.0 for reproducibility
+    float temperature = 0.0f;   
     float topp = 0.9f;          
-    int output_tokens = 100;     // CHANGE THIS FOR EACH TEST
-    char *prompt = "The old lighthouse stood on the rocky cliff overlooking the vast ocean. For decades, it had guided ships safely through treacherous waters during stormy nights. The keeper, an elderly man named Thomas, climbed the spiral staircase every evening to light the beacon. He knew every crack in the walls and every creak of the wooden steps."; // CHANGE THIS FOR T3/T4
+    int output_tokens = 100;     
+    char *prompt = "The old lighthouse stood on the rocky cliff overlooking the vast ocean. For decades, it had guided ships safely through treacherous waters during stormy nights. The keeper, an elderly man named Thomas, climbed the spiral staircase every evening to light the beacon. He knew every crack in the walls and every creak of the wooden steps.";
     unsigned long long rng_seed = 12345;
 
-    // Simple arg parsing (optional - can still override prompt if needed)
     if (argc > 1) {
         prompt = argv[1];
     }
     
-    // build the Transformer via UDP fetch
     Transformer transformer;
     build_transformer(&transformer);
 
-    // build the Tokenizer via UDP fetch
     Tokenizer tokenizer;
     build_tokenizer(&tokenizer, transformer.config.vocab_size);
 
-    // Encode prompt to get prompt length
     int num_prompt_tokens = 0;
     int* prompt_tokens = (int*)malloc((strlen(prompt)+3) * sizeof(int));
     encode(&tokenizer, prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
     
-    // Calculate total steps = prompt tokens + desired output tokens
     int steps = num_prompt_tokens + output_tokens;
     
     if (steps > transformer.config.seq_len) {
@@ -901,14 +992,11 @@ int main(int argc, char *argv[]) {
     
     free(prompt_tokens);
 
-    // build the Sampler
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
 
-    // run!
     generate(&transformer, &tokenizer, &sampler, prompt, steps);
 
-    // cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);
     free_transformer(&transformer);
