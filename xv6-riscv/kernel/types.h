@@ -8,3 +8,13 @@ typedef unsigned int  uint32;
 typedef unsigned long uint64;
 
 typedef uint64 pde_t;
+
+#ifndef _MUTEX_T_DEFINED
+#define _MUTEX_T_DEFINED
+
+typedef struct {
+  int locked;
+  int owner_tid;
+} mutex_t;
+
+#endif
